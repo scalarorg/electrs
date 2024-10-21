@@ -38,17 +38,15 @@ fn main() {
         "Seaching for scripts with history rows of {} or more...",
         high_usage_threshold
     );
-
     let thread_pool = rayon::ThreadPoolBuilder::new()
         .num_threads(thread_count)
         .build()
         .expect("Built threadpool");
 
     let (sender, receiver) = crossbeam_channel::unbounded::<[u8; 32]>();
-
     let increment = 256 / thread_count;
     let bytes: Vec<u8> = (0u8..=255u8)
-        .filter(|n| *n % increment as u8 == 0)
+        .filter(|n| (*n as usize % increment) as u8 == 0)
         .collect();
 
     let now = Instant::now();

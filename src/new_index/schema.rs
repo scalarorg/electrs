@@ -184,6 +184,8 @@ struct IndexerConfig {
     address_search: bool,
     index_unspendables: bool,
     network: Network,
+    start_height: usize,
+    stop_height: usize,
     #[cfg(feature = "liquid")]
     parent_network: crate::chain::BNetwork,
 }
@@ -195,6 +197,8 @@ impl From<&Config> for IndexerConfig {
             address_search: config.address_search,
             index_unspendables: config.index_unspendables,
             network: config.network_type,
+            start_height: config.start_height,
+            stop_height: config.stop_height,
             #[cfg(feature = "liquid")]
             parent_network: config.parent_network,
         }
@@ -233,7 +237,11 @@ impl Indexer {
         let added_blockhashes = self.store.added_blockhashes.read().unwrap();
         new_headers
             .iter()
-            .filter(|e| !added_blockhashes.contains(e.hash()))
+            .filter(|e| {
+                !added_blockhashes.contains(e.hash())
+                    && e.height() >= self.iconfig.start_height
+                    && e.height() <= self.iconfig.stop_height
+            })
             .cloned()
             .collect()
     }
