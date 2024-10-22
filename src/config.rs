@@ -63,6 +63,7 @@ pub struct Config {
     pub rest_default_max_address_summary_txs: usize,
     pub rest_max_mempool_page_size: usize,
     pub rest_max_mempool_txid_page_size: usize,
+    pub allow_missing: bool,
     pub start_height: usize,
     pub stop_height: usize, //For debug purposes, set a stop height to limit the indexer
     #[cfg(feature = "liquid")]
@@ -278,12 +279,24 @@ impl Config {
                     .help("Welcome banner for the Electrum server, shown in the console to clients.")
                     .takes_value(true)
             );
-        let args = args.arg(
-            Arg::with_name("start_height")
-                .long("start-height")
-                .help("The height to start indexing from")
-                .takes_value(true),
-        );
+        let args = args
+            .arg(
+                Arg::with_name("allow_missing")
+                    .long("allow-missing")
+                    .help("Allow missing outpoint for quickly debuging"),
+            )
+            .arg(
+                Arg::with_name("start_height")
+                    .long("start-height")
+                    .help("The height to start indexing from")
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::with_name("stop_height")
+                    .long("stop-height")
+                    .help("The height to stop indexing at")
+                    .takes_value(true),
+            );
         #[cfg(unix)]
         let args = args.arg(
                 Arg::with_name("http_socket_file")
@@ -574,13 +587,14 @@ impl Config {
                     .exit(),
                 },
             ),
+            allow_missing: m.is_present("allow_missing"),
             start_height: m
                 .value_of("start_height")
-                .map(|s| s.parse().unwrap())
-                .unwrap_or(1),
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0),
             stop_height: m
                 .value_of("stop_height")
-                .map(|s| s.parse().unwrap())
+                .and_then(|s| s.parse().ok())
                 .unwrap_or(usize::MAX),
             #[cfg(feature = "liquid")]
             parent_network,

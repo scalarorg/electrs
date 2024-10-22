@@ -80,6 +80,7 @@ impl HeaderList {
     pub fn new(
         mut headers_map: HashMap<BlockHash, BlockHeader>,
         tip_hash: BlockHash,
+        allow_missing: bool,
     ) -> HeaderList {
         trace!(
             "processing {} headers, tip at {:?}",
@@ -92,15 +93,21 @@ impl HeaderList {
         let null_hash = BlockHash::default();
 
         while blockhash != null_hash {
-            let header = headers_map.remove(&blockhash).unwrap_or_else(|| {
+            let header = headers_map.remove(&blockhash);
+            if header.is_none() && !allow_missing {
                 panic!(
                     "missing expected blockhash in headers map: {:?}, pointed from: {:?}",
                     blockhash,
                     headers_chain.last().map(|h| h.block_hash())
                 )
-            });
-            blockhash = header.prev_blockhash;
-            headers_chain.push(header);
+            } else if header.is_some() {
+                let header = header.unwrap();
+                blockhash = header.prev_blockhash;
+                headers_chain.push(header);
+            } else {
+                trace!("missing header {:?}", blockhash);
+                break;
+            }
         }
         headers_chain.reverse();
 
@@ -156,6 +163,11 @@ impl HeaderList {
     }
 
     pub fn apply(&mut self, new_headers: Vec<HeaderEntry>) {
+        debug!(
+            "Current headers len {}, applying {} new headers",
+            self.headers.len(),
+            new_headers.len()
+        );
         // new_headers[i] -> new_headers[i - 1] (i.e. new_headers.last() is the tip)
         for i in 1..new_headers.len() {
             assert_eq!(new_headers[i - 1].height() + 1, new_headers[i].height());

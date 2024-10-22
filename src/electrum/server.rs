@@ -764,6 +764,7 @@ impl RPC {
 
                 ConnectionListener::new_unix(path)
             } else {
+                debug!("Starting Electrum RPC server on {}", addr);
                 ConnectionListener::new_tcp(&addr)
             };
             listener.run(acceptor, shutdown_channel);

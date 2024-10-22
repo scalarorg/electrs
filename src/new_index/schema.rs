@@ -37,7 +37,7 @@ use crate::new_index::fetch::{start_fetcher, BlockEntry, FetchFrom};
 #[cfg(feature = "liquid")]
 use crate::elements::{asset, peg};
 
-use super::db::ReverseScanGroupIterator;
+use super::{db::ReverseScanGroupIterator, vault};
 
 const MIN_HISTORY_ITEMS_TO_CACHE: usize = 100;
 
@@ -46,6 +46,7 @@ pub struct Store {
     txstore_db: DB,
     history_db: DB,
     cache_db: DB,
+    vault_db: DB,
     added_blockhashes: RwLock<HashSet<BlockHash>>,
     indexed_blockhashes: RwLock<HashSet<BlockHash>>,
     indexed_headers: RwLock<HeaderList>,
@@ -63,6 +64,8 @@ impl Store {
 
         let cache_db = DB::open(&path.join("cache"), config);
 
+        let vault_db = DB::open(&path.join("vault"), config);
+
         let headers = if let Some(tip_hash) = txstore_db.get(b"t") {
             let tip_hash = deserialize(&tip_hash).expect("invalid chain tip in `t`");
             let headers_map = load_blockheaders(&txstore_db);
@@ -71,7 +74,7 @@ impl Store {
                 headers_map.len(),
                 tip_hash
             );
-            HeaderList::new(headers_map, tip_hash)
+            HeaderList::new(headers_map, tip_hash, config.allow_missing)
         } else {
             HeaderList::empty()
         };
@@ -80,6 +83,7 @@ impl Store {
             txstore_db,
             history_db,
             cache_db,
+            vault_db,
             added_blockhashes: RwLock::new(added_blockhashes),
             indexed_blockhashes: RwLock::new(indexed_blockhashes),
             indexed_headers: RwLock::new(headers),
@@ -96,6 +100,10 @@ impl Store {
 
     pub fn cache_db(&self) -> &DB {
         &self.cache_db
+    }
+
+    pub fn vault_db(&self) -> &DB {
+        &self.vault_db
     }
 
     pub fn done_initial_sync(&self) -> bool {
@@ -184,6 +192,7 @@ struct IndexerConfig {
     address_search: bool,
     index_unspendables: bool,
     network: Network,
+    allow_missing: bool,
     start_height: usize,
     stop_height: usize,
     #[cfg(feature = "liquid")]
@@ -197,6 +206,7 @@ impl From<&Config> for IndexerConfig {
             address_search: config.address_search,
             index_unspendables: config.index_unspendables,
             network: config.network_type,
+            allow_missing: config.allow_missing,
             start_height: config.start_height,
             stop_height: config.stop_height,
             #[cfg(feature = "liquid")]
@@ -280,7 +290,18 @@ impl Indexer {
         let daemon = daemon.reconnect()?;
         let tip = daemon.getbestblockhash()?;
         let new_headers = self.get_new_headers(&daemon, &tip)?;
-
+        // 20241021:Scalar
+        // filter the headers are in the range
+        info!(
+            "Index block range: {} - {}",
+            self.iconfig.start_height, self.iconfig.stop_height
+        );
+        let new_headers = new_headers
+            .into_iter()
+            .filter(|h| {
+                h.height() >= self.iconfig.start_height && h.height() <= self.iconfig.stop_height
+            })
+            .collect::<Vec<_>>();
         let to_add = self.headers_to_add(&new_headers);
         debug!(
             "adding transactions from {} blocks using {:?}",
@@ -351,9 +372,13 @@ impl Indexer {
         debug!("Indexing {} blocks with Indexer", blocks.len());
         let previous_txos_map = {
             let _timer = self.start_timer("index_lookup");
-            lookup_txos(&self.store.txstore_db, &get_previous_txos(blocks), false)
+            lookup_txos(
+                &self.store.txstore_db,
+                &get_previous_txos(blocks),
+                self.iconfig.allow_missing,
+            )
         };
-        let rows = {
+        let (history_rows, vault_rows) = {
             let _timer = self.start_timer("index_process");
             let added_blockhashes = self.store.added_blockhashes.read().unwrap();
             for b in blocks {
@@ -368,7 +393,8 @@ impl Indexer {
             }
             index_blocks(blocks, &previous_txos_map, &self.iconfig)
         };
-        self.store.history_db.write(rows, self.flush);
+        self.store.history_db.write(history_rows, self.flush);
+        self.store.vault_db.write(vault_rows, self.flush);
     }
 }
 
@@ -1339,7 +1365,7 @@ fn lookup_txos(
         {
             Ok(pool) => break pool,
             Err(e) => {
-                if loop_count == 0 {
+                if loop_count == 0 && !allow_missing {
                     panic!("schema::lookup_txos failed to create a ThreadPool: {}", e);
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
@@ -1374,11 +1400,12 @@ fn index_blocks(
     block_entries: &[BlockEntry],
     previous_txos_map: &HashMap<OutPoint, TxOut>,
     iconfig: &IndexerConfig,
-) -> Vec<DBRow> {
+) -> (Vec<DBRow>, Vec<DBRow>) {
     block_entries
         .par_iter() // serialization is CPU-intensive
         .map(|b| {
             let mut rows = vec![];
+            let mut vault_rows = vec![];
             for (idx, tx) in b.block.txdata.iter().enumerate() {
                 let height = b.entry.height() as u32;
                 index_transaction(
@@ -1389,9 +1416,10 @@ fn index_blocks(
                     &mut rows,
                     iconfig,
                 );
+                vault::try_index_transaction(tx, height, idx as u16, &mut vault_rows);
             }
             rows.push(BlockRow::new_done(full_hash(&b.entry.hash()[..])).into_row()); // mark block as "indexed"
-            rows
+            (rows, vault_rows)
         })
         .flatten()
         .collect()
@@ -1437,12 +1465,15 @@ fn index_transaction(
         if !has_prevout(txi) {
             continue;
         }
-        let prev_txo = previous_txos_map
-            .get(&txi.previous_output)
-            .unwrap_or_else(|| panic!("missing previous txo {}", txi.previous_output));
+        let prev_txo = previous_txos_map.get(&txi.previous_output);
 
+        if prev_txo.is_none() && !iconfig.allow_missing {
+            panic!("missing previous txo {}", txi.previous_output);
+        };
+
+        let empty_script = Script::new();
         let history = TxHistoryRow::new(
-            &prev_txo.script_pubkey,
+            prev_txo.map_or(&empty_script, |txo| &txo.script_pubkey),
             confirmed_height,
             tx_position,
             TxHistoryInfo::Spending(SpendingInfo {
@@ -1450,7 +1481,7 @@ fn index_transaction(
                 vin: txi_index as u32,
                 prev_txid: full_hash(&txi.previous_output.txid[..]),
                 prev_vout: txi.previous_output.vout,
-                value: prev_txo.value,
+                value: prev_txo.map_or(Value::default(), |txo| txo.value),
             }),
         );
         rows.push(history.into_row());

@@ -8,8 +8,8 @@ services:
     restart: on-failure
 
     ports:
-      - 60001:60001
-      - 50001:50001
+      - 60001:60001 # Electrum
+      - 3001:3001 # HTTP
 
     entrypoint:
       /bin/electrs
