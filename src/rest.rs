@@ -937,14 +937,6 @@ fn handle_request(
                 TxidLocation::Chain(height) => Some(height),
             };
 
-            txs.extend(
-                query
-                    .mempool()
-                    .history(&script_hash[..], after_txid.as_ref(), max_txs)
-                    .into_iter()
-                    .map(|tx| (tx, None)),
-            );
-
             if txs.len() < max_txs {
                 let after_txid_ref = if !txs.is_empty() {
                     // If there are any txs, we know mempool found the
