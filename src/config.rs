@@ -1,9 +1,11 @@
+use bitcoin::p2p::Magic;
 use clap::{App, Arg};
 use dirs::home_dir;
 use std::fs;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 use stderrlog;
 
@@ -33,7 +35,7 @@ pub struct Config {
     // See below for the documentation of each field:
     pub log: stderrlog::StdErrLog,
     pub network_type: Network,
-    pub magic: Option<u32>,
+    pub magic: Option<Magic>,
     pub db_path: PathBuf,
     pub daemon_dir: PathBuf,
     pub blocks_dir: PathBuf,
@@ -354,10 +356,10 @@ impl Config {
 
         let network_name = m.value_of("network").unwrap_or("mainnet");
         let network_type = Network::from(network_name);
-        let magic: Option<u32> = m
+        let magic: Option<Magic> = m
             .value_of("magic")
             .filter(|s| !s.is_empty())
-            .map(|s| u32::from_str_radix(s, 16).expect("invalid network magic"));
+            .map(|s| Magic::from_str(s).expect("invalid network magic"));
         let db_dir = Path::new(m.value_of("db_dir").unwrap_or("./db"));
         let db_path = db_dir.join(network_name);
 

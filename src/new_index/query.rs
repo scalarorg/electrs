@@ -152,7 +152,7 @@ impl Query {
     }
 
     pub fn lookup_tx_spends(&self, tx: Transaction) -> Vec<Option<SpendingInput>> {
-        let txid = tx.txid();
+        let txid = tx.compute_txid();
 
         tx.output
             .par_iter()

@@ -2,11 +2,13 @@ use std::str::FromStr;
 
 #[cfg(not(feature = "liquid"))] // use regular Bitcoin data structures
 pub use bitcoin::{
+    address,
+    block::Header as BlockHeader,
     blockdata::{opcodes, script, witness::Witness},
     consensus::deserialize,
     hashes,
-    util::address,
-    Block, BlockHash, BlockHeader, OutPoint, Script, Transaction, TxIn, TxOut, Txid,
+    script::Builder as ScriptBuilder,
+    Block, BlockHash, OutPoint, Transaction, TxIn, TxOut, Txid,
 };
 
 #[cfg(feature = "liquid")]
@@ -20,7 +22,7 @@ pub use {
 };
 
 use bitcoin::blockdata::constants::genesis_block;
-pub use bitcoin::network::constants::Network as BNetwork;
+pub use bitcoin::network::Network as BNetwork;
 
 #[cfg(not(feature = "liquid"))]
 pub type Value = u64;
@@ -59,7 +61,7 @@ pub const LIQUID_TESTNET_PARAMS: address::AddressParams = address::AddressParams
 
 impl Network {
     #[cfg(not(feature = "liquid"))]
-    pub fn magic(self) -> u32 {
+    pub fn magic(self) -> bitcoin::p2p::Magic {
         BNetwork::from(self).magic()
     }
 
@@ -229,6 +231,7 @@ impl From<BNetwork> for Network {
             BNetwork::Testnet => Network::Testnet,
             BNetwork::Regtest => Network::Regtest,
             BNetwork::Signet => Network::Signet,
+            _ => todo!(),
         }
     }
 }

@@ -16,6 +16,7 @@ use std::thread;
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 use error_chain::ChainedError;
 use hex;
+use hex::ToHex as _;
 use serde_json::{from_str, Value};
 use sha2::{Digest, Sha256};
 
@@ -210,7 +211,8 @@ impl Connection {
             .query
             .chain()
             .header_by_height(height)
-            .map(|entry| hex::encode(serialize(entry.header())))
+            .map(|entry| entry.hash().encode_hex())
+            //.map(|entry| hex::encode(serialize(entry.header())))
             .chain_err(|| "missing header")?;
 
         if cp_height == 0 {
@@ -236,7 +238,8 @@ impl Connection {
                 self.query
                     .chain()
                     .header_by_height(height)
-                    .map(|entry| hex::encode(serialize(entry.header())))
+                    .map(|entry| entry.hash().encode_hex())
+                //.map(|entry| hex::encode(serialize(entry.header())))
             })
             .collect();
 

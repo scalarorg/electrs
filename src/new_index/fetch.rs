@@ -1,13 +1,13 @@
+use bitcoin::io::{BufRead, Cursor};
+use bitcoin::p2p::Magic;
 use rayon::prelude::*;
 
 #[cfg(not(feature = "liquid"))]
 use bitcoin::consensus::encode::{deserialize, Decodable};
 #[cfg(feature = "liquid")]
 use elements::encode::{deserialize, Decodable};
-
 use std::collections::HashMap;
 use std::fs;
-use std::io::Cursor;
 use std::path::PathBuf;
 use std::thread;
 
@@ -87,7 +87,7 @@ fn bitcoind_fetcher(
                     .zip(entries)
                     .map(|(block, entry)| BlockEntry {
                         entry: entry.clone(), // TODO: remove this clone()
-                        size: block.size() as u32,
+                        size: block.total_size() as u32,
                         block,
                     })
                     .collect();
@@ -165,7 +165,7 @@ fn blkfiles_reader(blk_files: Vec<PathBuf>) -> Fetcher<Vec<u8>> {
     )
 }
 
-fn blkfiles_parser(blobs: Fetcher<Vec<u8>>, magic: u32) -> Fetcher<Vec<SizedBlock>> {
+fn blkfiles_parser(blobs: Fetcher<Vec<u8>>, magic: Magic) -> Fetcher<Vec<SizedBlock>> {
     let chan = SyncChannel::new(1);
     let sender = chan.sender();
 
@@ -183,17 +183,19 @@ fn blkfiles_parser(blobs: Fetcher<Vec<u8>>, magic: u32) -> Fetcher<Vec<SizedBloc
     )
 }
 
-fn parse_blocks(blob: Vec<u8>, magic: u32) -> Result<Vec<SizedBlock>> {
+fn parse_blocks(blob: Vec<u8>, magic: Magic) -> Result<Vec<SizedBlock>> {
     let mut cursor = Cursor::new(&blob);
     let mut slices = vec![];
     let max_pos = blob.len() as u64;
 
     while cursor.position() < max_pos {
         let offset = cursor.position();
-        match u32::consensus_decode(&mut cursor) {
+        match Magic::consensus_decode(&mut cursor) {
             Ok(value) => {
                 if magic != value {
-                    cursor.set_position(offset + 1);
+                    //Move to the next position
+                    cursor = Cursor::new(&blob);
+                    cursor.consume(1 + offset as usize);
                     continue;
                 }
             }
@@ -207,17 +209,21 @@ fn parse_blocks(blob: Vec<u8>, magic: u32) -> Result<Vec<SizedBlock>> {
         // and the block body won't be written to the blk*.dat file.
         // Since the first 4 bytes should contain the block's version, we can skip such blocks
         // by peeking the cursor (and skipping previous `magic` and `block_size`).
-        match u32::consensus_decode(&mut cursor) {
+        match Magic::consensus_decode(&mut cursor) {
             Ok(value) => {
                 if magic == value {
-                    cursor.set_position(start);
+                    // cursor.set_position(start);
+                    // Create new cursor to reset the position
+                    cursor = Cursor::new(&blob);
+                    cursor.consume(start as usize);
                     continue;
                 }
             }
             Err(_) => break, // EOF
         }
         slices.push((&blob[start as usize..end as usize], block_size));
-        cursor.set_position(end);
+        //Move cursor to the end of the block
+        cursor.consume(block_size as usize);
     }
 
     let pool = rayon::ThreadPoolBuilder::new()

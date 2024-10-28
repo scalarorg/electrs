@@ -1,8 +1,9 @@
 use super::{compute_script_hash, DBRow};
-use crate::chain::{OutPoint, Script, Transaction, TxOut, Txid, Value};
+use crate::chain::{OutPoint, Transaction, TxOut, Txid, Value};
 use crate::util::{bincode_util, full_hash, has_prevout, is_spendable, Bytes, FullHash};
 use bitcoin::blockdata::opcodes::all as opcodes;
 use bitcoin::blockdata::script::Instruction;
+use bitcoin::ScriptBuf;
 use bitcoin::{Block, Network};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -106,7 +107,12 @@ pub struct TxVaultRow {
 }
 
 impl TxVaultRow {
-    fn new(script: &Script, confirmed_height: u32, tx_position: u16, txinfo: TxVaultInfo) -> Self {
+    fn new(
+        script: &ScriptBuf,
+        confirmed_height: u32,
+        tx_position: u16,
+        txinfo: TxVaultInfo,
+    ) -> Self {
         let key = TxVaultKey {
             code: b'H',
             hash: compute_script_hash(script),

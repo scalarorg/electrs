@@ -481,7 +481,7 @@ impl Mempool {
         let mut txids = Vec::with_capacity(txs.len());
         // Phase 1: add to txstore
         for tx in txs {
-            let txid = tx.txid();
+            let txid = tx.compute_txid();
             // Only push if it doesn't already exist.
             // This is important now that update doesn't lock during
             // the entire function body.
@@ -526,7 +526,10 @@ impl Mempool {
                 fee: feeinfo.fee,
                 vsize: feeinfo.vsize,
                 #[cfg(not(feature = "liquid"))]
-                value: prevouts.values().map(|prevout| prevout.value).sum(),
+                value: prevouts
+                    .values()
+                    .map(|prevout| prevout.value.to_sat())
+                    .sum(),
             });
 
             self.feeinfo.insert(txid, feeinfo);
@@ -541,7 +544,7 @@ impl Mempool {
                         vin: input_index,
                         prev_txid: full_hash(&txi.previous_output.txid[..]),
                         prev_vout: txi.previous_output.vout,
-                        value: prevout.value,
+                        value: prevout.value.to_sat(),
                     }),
                 )
             });
@@ -560,7 +563,7 @@ impl Mempool {
                         TxHistoryInfo::Funding(FundingInfo {
                             txid: txid_bytes,
                             vout: index as u32,
-                            value: txo.value,
+                            value: txo.value.to_sat(),
                         }),
                     )
                 });

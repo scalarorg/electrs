@@ -1,4 +1,6 @@
-use crate::chain::{address, BlockHash, Network, OutPoint, Script, Transaction, TxIn, TxOut, Txid};
+use crate::chain::{
+    address, BlockHash, BlockHeader, Network, OutPoint, Transaction, TxIn, TxOut, Txid,
+};
 use crate::config::{Config, VERSION_STRING};
 use crate::errors;
 use crate::metrics::Metrics;
@@ -13,9 +15,12 @@ use crate::util::{
 use {bitcoin::consensus::encode, std::str::FromStr};
 
 use bitcoin::blockdata::opcodes;
-use bitcoin::hashes::hex::{FromHex, ToHex};
-use bitcoin::hashes::Error as HashError;
-use hex::{self, FromHexError};
+use bitcoin::hashes::hex::FromHex;
+use bitcoin::hashes::FromSliceError;
+use bitcoin::hashes::Hash;
+use bitcoin::Network as BNetwork;
+use bitcoin::{Amount, ScriptBuf, Sequence};
+use hex::{self, FromHexError, ToHex};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Response, Server, StatusCode};
 use prometheus::{HistogramOpts, HistogramVec};
@@ -89,28 +94,28 @@ impl BlockValue {
     fn new(blockhm: BlockHeaderMeta) -> Self {
         let header = blockhm.header_entry.header();
         BlockValue {
-            id: header.block_hash().to_hex(),
+            id: header.block_hash().as_raw_hash().to_string(),
             height: blockhm.header_entry.height() as u32,
             version: {
                 #[allow(clippy::unnecessary_cast)]
                 {
-                    header.version as u32
+                    header.version.to_consensus() as u32
                 }
             },
             timestamp: header.time,
             tx_count: blockhm.meta.tx_count,
             size: blockhm.meta.size,
             weight: blockhm.meta.weight,
-            merkle_root: header.merkle_root.to_hex(),
-            previousblockhash: if header.prev_blockhash != BlockHash::default() {
-                Some(header.prev_blockhash.to_hex())
+            merkle_root: header.merkle_root.as_raw_hash().to_string(),
+            previousblockhash: if header.prev_blockhash != BlockHash::all_zeros() {
+                Some(header.prev_blockhash.as_raw_hash().to_string())
             } else {
                 None
             },
             mediantime: blockhm.mtp,
 
             #[cfg(not(feature = "liquid"))]
-            bits: header.bits,
+            bits: header.bits.to_consensus(),
             #[cfg(not(feature = "liquid"))]
             nonce: header.nonce,
             #[cfg(not(feature = "liquid"))]
@@ -127,9 +132,9 @@ impl BlockValue {
 ///
 /// https://github.com/bitcoin/bitcoin/blob/v25.0/src/rpc/blockchain.cpp#L75-L97
 #[cfg_attr(feature = "liquid", allow(dead_code))]
-fn difficulty_new(bh: &bitcoin::BlockHeader) -> f64 {
-    let mut n_shift = bh.bits >> 24 & 0xff;
-    let mut d_diff = (0x0000ffff as f64) / ((bh.bits & 0x00ffffff) as f64);
+fn difficulty_new(bh: &BlockHeader) -> f64 {
+    let mut n_shift = bh.bits.to_consensus() >> 24 & 0xff;
+    let mut d_diff = (0x0000ffff as f64) / ((bh.bits.to_consensus() & 0x00ffffff) as f64);
 
     while n_shift < 29 {
         d_diff *= 256.0;
@@ -151,7 +156,7 @@ struct TransactionValue {
     vin: Vec<TxInValue>,
     vout: Vec<TxOutValue>,
     size: u32,
-    weight: u32,
+    weight: u64,
     sigops: u32,
     fee: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -187,13 +192,13 @@ impl TransactionValue {
 
         #[allow(clippy::unnecessary_cast)]
         Ok(TransactionValue {
-            txid: tx.txid(),
-            version: tx.version as u32,
-            locktime: tx.lock_time,
+            txid: tx.compute_txid(),
+            version: tx.version.0 as u32,
+            locktime: tx.lock_time.to_consensus_u32(),
             vin: vins,
             vout: vouts,
-            size: tx.size() as u32,
-            weight: tx.weight() as u32,
+            size: tx.vsize() as u32,
+            weight: tx.weight().to_wu(),
             sigops,
             fee,
             status: Some(TransactionStatus::from(blockid)),
@@ -206,12 +211,12 @@ struct TxInValue {
     txid: Txid,
     vout: u32,
     prevout: Option<TxOutValue>,
-    scriptsig: Script,
+    scriptsig: ScriptBuf,
     scriptsig_asm: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<Vec<String>>,
     is_coinbase: bool,
-    sequence: u32,
+    sequence: Sequence,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     inner_redeemscript_asm: Option<String>,
@@ -275,7 +280,7 @@ impl TxInValue {
 
 #[derive(Serialize, Deserialize, Clone)]
 struct TxOutValue {
-    scriptpubkey: Script,
+    scriptpubkey: ScriptBuf,
     scriptpubkey_asm: String,
     scriptpubkey_type: String,
 
@@ -283,7 +288,7 @@ struct TxOutValue {
     scriptpubkey_address: Option<String>,
 
     #[cfg(not(feature = "liquid"))]
-    value: u64,
+    value: Amount,
 
     #[cfg(feature = "liquid")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -352,11 +357,11 @@ impl TxOutValue {
             "p2pkh"
         } else if script.is_p2sh() {
             "p2sh"
-        } else if script.is_v0_p2wpkh() {
+        } else if script.is_p2wpkh() {
             "v0_p2wpkh"
-        } else if script.is_v0_p2wsh() {
+        } else if script.is_p2wsh() {
             "v0_p2wsh"
-        } else if is_v1_p2tr(script) {
+        } else if is_p2tr(script) {
             "v1_p2tr"
         } else if is_anchor(script) {
             "anchor"
@@ -388,13 +393,15 @@ impl TxOutValue {
         }
     }
 }
-fn is_v1_p2tr(script: &Script) -> bool {
+fn is_p2tr(script: &ScriptBuf) -> bool {
+    let script = script.as_bytes();
     script.len() == 34
-        && script[0] == opcodes::all::OP_PUSHNUM_1.into_u8()
-        && script[1] == opcodes::all::OP_PUSHBYTES_32.into_u8()
+        && script[0] == opcodes::all::OP_PUSHNUM_1.to_u8()
+        && script[1] == opcodes::all::OP_PUSHBYTES_32.to_u8()
 }
-fn is_bare_multisig(script: &Script) -> bool {
+fn is_bare_multisig(script: &ScriptBuf) -> bool {
     let len = script.len();
+    let script = script.as_bytes();
     // 1-of-1 multisig is 37 bytes
     // Max is 15 pubkeys
     // Min is 1
@@ -403,18 +410,19 @@ fn is_bare_multisig(script: &Script) -> bool {
     //   OP_M ... OP_N OP_CHECKMULTISIG
     // is bare multisig
     len >= 37
-        && script[len - 1] == opcodes::all::OP_CHECKMULTISIG.into_u8()
-        && script[len - 2] >= opcodes::all::OP_PUSHNUM_1.into_u8()
-        && script[len - 2] <= opcodes::all::OP_PUSHNUM_15.into_u8()
-        && script[0] >= opcodes::all::OP_PUSHNUM_1.into_u8()
+        && script[len - 1] == opcodes::all::OP_CHECKMULTISIG.to_u8()
+        && script[len - 2] >= opcodes::all::OP_PUSHNUM_1.to_u8()
+        && script[len - 2] <= opcodes::all::OP_PUSHNUM_15.to_u8()
+        && script[0] >= opcodes::all::OP_PUSHNUM_1.to_u8()
         && script[0] <= script[len - 2]
 }
 
-fn is_anchor(script: &Script) -> bool {
+fn is_anchor(script: &ScriptBuf) -> bool {
     let len = script.len();
+    let script = script.as_bytes();
     len == 4
-        && script[0] == opcodes::all::OP_PUSHNUM_1.into_u8()
-        && script[1] == opcodes::all::OP_PUSHBYTES_2.into_u8()
+        && script[0] == opcodes::all::OP_PUSHNUM_1.to_u8()
+        && script[1] == opcodes::all::OP_PUSHBYTES_2.to_u8()
         && script[2] == 0x4e
         && script[3] == 0x73
 }
@@ -734,7 +742,7 @@ fn handle_request(
     ) {
         (&Method::GET, Some(&"blocks"), Some(&"tip"), Some(&"hash"), None, None) => http_message(
             StatusCode::OK,
-            query.chain().best_hash().to_hex(),
+            query.chain().best_hash().as_raw_hash().to_string(),
             TTL_SHORT,
         ),
 
@@ -755,10 +763,10 @@ fn handle_request(
                 .header_by_height(height)
                 .ok_or_else(|| HttpError::not_found("Block not found".to_string()))?;
             let ttl = ttl_by_depth(Some(height), query);
-            http_message(StatusCode::OK, header.hash().to_hex(), ttl)
+            http_message(StatusCode::OK, header.hash().as_raw_hash().to_string(), ttl)
         }
         (&Method::GET, Some(&"block"), Some(hash), None, None, None) => {
-            let hash = BlockHash::from_hex(hash)?;
+            let hash = BlockHash::from_str(hash)?;
             let blockhm = query
                 .chain()
                 .get_block_with_meta(&hash)
@@ -767,13 +775,13 @@ fn handle_request(
             json_response(block_value, TTL_LONG)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"status"), None, None) => {
-            let hash = BlockHash::from_hex(hash)?;
+            let hash = BlockHash::from_str(hash)?;
             let status = query.chain().get_block_status(&hash);
             let ttl = ttl_by_depth(status.height, query);
             json_response(status, ttl)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txids"), None, None) => {
-            let hash = BlockHash::from_hex(hash)?;
+            let hash = BlockHash::from_str(hash)?;
             let txids = query
                 .chain()
                 .get_block_txids(&hash)
@@ -781,7 +789,7 @@ fn handle_request(
             json_response(txids, TTL_LONG)
         }
         (&Method::GET, Some(&INTERNAL_PREFIX), Some(&"block"), Some(hash), Some(&"txs"), None) => {
-            let hash = BlockHash::from_hex(hash)?;
+            let hash = BlockHash::from_str(hash)?;
             let block_id = query.chain().blockid_by_hash(&hash);
             let txs = query
                 .chain()
@@ -795,7 +803,7 @@ fn handle_request(
             json_response(prepare_txs(txs, query, config), ttl)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"header"), None, None) => {
-            let hash = BlockHash::from_hex(hash)?;
+            let hash = BlockHash::from_str(hash)?;
             let header = query
                 .chain()
                 .get_block_header(&hash)
@@ -805,7 +813,7 @@ fn handle_request(
             http_message(StatusCode::OK, header_hex, TTL_LONG)
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"raw"), None, None) => {
-            let hash = BlockHash::from_hex(hash)?;
+            let hash = BlockHash::from_str(hash)?;
             let raw = query
                 .chain()
                 .get_block_raw(&hash)
@@ -820,7 +828,7 @@ fn handle_request(
                 .unwrap())
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txid"), Some(index), None) => {
-            let hash = BlockHash::from_hex(hash)?;
+            let hash = BlockHash::from_str(hash)?;
             let index: usize = index.parse()?;
             let txids = query
                 .chain()
@@ -829,10 +837,14 @@ fn handle_request(
             if index >= txids.len() {
                 bail!(HttpError::not_found("tx index out of range".to_string()));
             }
-            http_message(StatusCode::OK, txids[index].to_hex(), TTL_LONG)
+            http_message(
+                StatusCode::OK,
+                txids[index].as_raw_hash().to_string(),
+                TTL_LONG,
+            )
         }
         (&Method::GET, Some(&"block"), Some(hash), Some(&"txs"), start_index, None) => {
-            let hash = BlockHash::from_hex(hash)?;
+            let hash = BlockHash::from_str(hash)?;
             let txids = query
                 .chain()
                 .get_block_txids(&hash)
@@ -1080,7 +1092,7 @@ fn handle_request(
             last_seen_txid,
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
-            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_str(txid).ok());
             let max_txs = query_params
                 .get("max_txs")
                 .and_then(|s| s.parse::<usize>().ok())
@@ -1111,7 +1123,7 @@ fn handle_request(
             last_seen_txid,
         ) => {
             let script_hash = to_scripthash(script_type, script_str, config.network_type)?;
-            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_str(txid).ok());
             let max_txs = cmp::min(
                 config.rest_default_max_address_summary_txs,
                 query_params
@@ -1192,7 +1204,7 @@ fn handle_request(
                 })
                 .collect();
 
-            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_str(txid).ok());
             let max_txs = cmp::min(
                 config.rest_default_max_address_summary_txs,
                 query_params
@@ -1292,7 +1304,7 @@ fn handle_request(
             json_response(results, TTL_SHORT)
         }
         (&Method::GET, Some(&"tx"), Some(hash), None, None, None) => {
-            let hash = Txid::from_hex(hash)?;
+            let hash = Txid::from_str(hash)?;
             let tx = query
                 .lookup_txn(&hash)
                 .ok_or_else(|| HttpError::not_found("Transaction not found".to_string()))?;
@@ -1317,7 +1329,7 @@ fn handle_request(
 
             match txid_strings
                 .into_iter()
-                .map(|txid| Txid::from_hex(&txid))
+                .map(|txid| Txid::from_str(&txid))
                 .collect::<Result<Vec<Txid>, _>>()
             {
                 Ok(txids) => {
@@ -1336,7 +1348,7 @@ fn handle_request(
         }
         (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"hex"), None, None)
         | (&Method::GET, Some(&"tx"), Some(hash), Some(out_type @ &"raw"), None, None) => {
-            let hash = Txid::from_hex(hash)?;
+            let hash = Txid::from_str(hash)?;
             let rawtx = query
                 .lookup_raw_txn(&hash)
                 .ok_or_else(|| HttpError::not_found("Transaction not found".to_string()))?;
@@ -1357,20 +1369,20 @@ fn handle_request(
                 .unwrap())
         }
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"status"), None, None) => {
-            let hash = Txid::from_hex(hash)?;
+            let hash = Txid::from_str(hash)?;
             let status = query.get_tx_status(&hash);
             let ttl = ttl_by_depth(status.block_height, query);
             json_response(status, ttl)
         }
 
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"merkle-proof"), None, None) => {
-            let hash = Txid::from_hex(hash)?;
+            let hash = Txid::from_str(hash)?;
             let blockid = query.chain().tx_confirming_block(&hash).ok_or_else(|| {
                 HttpError::not_found("Transaction not found or is unconfirmed".to_string())
             })?;
             let (merkle, pos) =
                 electrum_merkle::get_tx_merkle_proof(query.chain(), &hash, &blockid.hash)?;
-            let merkle: Vec<String> = merkle.into_iter().map(|txid| txid.to_hex()).collect();
+            let merkle: Vec<String> = merkle.into_iter().map(|txid| txid.encode_hex()).collect();
             let ttl = ttl_by_depth(Some(blockid.height), query);
             json_response(
                 json!({ "block_height": blockid.height, "merkle": merkle, "pos": pos }),
@@ -1379,7 +1391,7 @@ fn handle_request(
         }
         #[cfg(not(feature = "liquid"))]
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"merkleblock-proof"), None, None) => {
-            let hash = Txid::from_hex(hash)?;
+            let hash = Txid::from_str(hash)?;
 
             let merkleblock = query.chain().get_merkleblock_proof(&hash).ok_or_else(|| {
                 HttpError::not_found("Transaction not found or is unconfirmed".to_string())
@@ -1396,7 +1408,7 @@ fn handle_request(
             )
         }
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"outspend"), Some(index), None) => {
-            let hash = Txid::from_hex(hash)?;
+            let hash = Txid::from_str(hash)?;
             let outpoint = OutPoint {
                 txid: hash,
                 vout: index.parse::<u32>()?,
@@ -1411,7 +1423,7 @@ fn handle_request(
             json_response(spend, ttl)
         }
         (&Method::GET, Some(&"tx"), Some(hash), Some(&"outspends"), None, None) => {
-            let hash = Txid::from_hex(hash)?;
+            let hash = Txid::from_str(hash)?;
             let tx = query
                 .lookup_txn(&hash)
                 .ok_or_else(|| HttpError::not_found("Transaction not found".to_string()))?;
@@ -1438,7 +1450,7 @@ fn handle_request(
             let txid = query
                 .broadcast_raw(&txhex)
                 .map_err(|err| HttpError::from(err.description().to_string()))?;
-            http_message(StatusCode::OK, txid.to_hex(), 0)
+            http_message(StatusCode::OK, txid.as_raw_hash().to_string(), 0)
         }
         (&Method::POST, Some(&"txs"), Some(&"test"), None, None, None) => {
             let txhexes: Vec<String> =
@@ -1497,7 +1509,7 @@ fn handle_request(
             let spends: Vec<Vec<SpendingValue>> = txid_strings
                 .into_iter()
                 .map(|txid_str| {
-                    Txid::from_hex(txid_str)
+                    Txid::from_str(txid_str)
                         .ok()
                         .and_then(|txid| query.lookup_txn(&txid))
                         .map_or_else(Vec::new, |tx| {
@@ -1528,7 +1540,7 @@ fn handle_request(
             let spends: Vec<Vec<SpendingValue>> = txid_strings
                 .into_iter()
                 .map(|txid_str| {
-                    Txid::from_hex(&txid_str)
+                    Txid::from_str(&txid_str)
                         .ok()
                         .and_then(|txid| query.lookup_txn(&txid))
                         .map_or_else(Vec::new, |tx| {
@@ -1564,7 +1576,7 @@ fn handle_request(
                     let index_part = parts.next();
 
                     if let (Some(hash), Some(index)) = (hash_part, index_part) {
-                        if let (Ok(txid), Ok(vout)) = (Txid::from_hex(hash), index.parse::<u32>()) {
+                        if let (Ok(txid), Ok(vout)) = (Txid::from_str(hash), index.parse::<u32>()) {
                             let outpoint = OutPoint { txid, vout };
                             return query
                                 .lookup_spend(&outpoint)
@@ -1585,7 +1597,7 @@ fn handle_request(
             json_response(query.mempool().txids(), TTL_SHORT)
         }
         (&Method::GET, Some(&"mempool"), Some(&"txids"), Some(&"page"), last_seen_txid, None) => {
-            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_str(txid).ok());
             let max_txs = query_params
                 .get("max_txs")
                 .and_then(|s| s.parse::<usize>().ok())
@@ -1618,7 +1630,7 @@ fn handle_request(
 
             match txid_strings
                 .into_iter()
-                .map(|txid| Txid::from_hex(&txid))
+                .map(|txid| Txid::from_str(&txid))
                 .collect::<Result<Vec<Txid>, _>>()
             {
                 Ok(txids) => {
@@ -1643,7 +1655,7 @@ fn handle_request(
             last_seen_txid,
             None,
         ) => {
-            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_str(txid).ok());
             let max_txs = query_params
                 .get("max_txs")
                 .and_then(|s| s.parse::<usize>().ok())
@@ -1696,7 +1708,7 @@ fn handle_request(
 
         #[cfg(feature = "liquid")]
         (&Method::GET, Some(&"asset"), Some(asset_str), None, None, None) => {
-            let asset_id = AssetId::from_hex(asset_str)?;
+            let asset_id = AssetId::from_str(asset_str)?;
             let asset_entry = query
                 .lookup_asset(&asset_id)?
                 .ok_or_else(|| HttpError::not_found("Asset id not found".to_string()))?;
@@ -1706,7 +1718,7 @@ fn handle_request(
 
         #[cfg(feature = "liquid")]
         (&Method::GET, Some(&"asset"), Some(asset_str), Some(&"txs"), None, None) => {
-            let asset_id = AssetId::from_hex(asset_str)?;
+            let asset_id = AssetId::from_str(asset_str)?;
 
             let mut txs = vec![];
 
@@ -1738,8 +1750,8 @@ fn handle_request(
             Some(&"chain"),
             last_seen_txid,
         ) => {
-            let asset_id = AssetId::from_hex(asset_str)?;
-            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_hex(txid).ok());
+            let asset_id = AssetId::from_str(asset_str)?;
+            let last_seen_txid = last_seen_txid.and_then(|txid| Txid::from_str(txid).ok());
 
             let txs = query
                 .chain()
@@ -1756,7 +1768,7 @@ fn handle_request(
 
         #[cfg(feature = "liquid")]
         (&Method::GET, Some(&"asset"), Some(asset_str), Some(&"txs"), Some(&"mempool"), None) => {
-            let asset_id = AssetId::from_hex(asset_str)?;
+            let asset_id = AssetId::from_str(asset_str)?;
 
             let txs = query
                 .mempool()
@@ -1770,7 +1782,7 @@ fn handle_request(
 
         #[cfg(feature = "liquid")]
         (&Method::GET, Some(&"asset"), Some(asset_str), Some(&"supply"), param, None) => {
-            let asset_id = AssetId::from_hex(asset_str)?;
+            let asset_id = AssetId::from_str(asset_str)?;
             let asset_entry = query
                 .lookup_asset(&asset_id)?
                 .ok_or_else(|| HttpError::not_found("Asset id not found".to_string()))?;
@@ -1898,18 +1910,20 @@ fn address_to_scripthash(addr: &str, network: Network) -> Result<FullHash, HttpE
     let addr = address::Address::parse_with_params(addr, network.address_params())?;
 
     #[cfg(not(feature = "liquid"))]
-    let is_expected_net = {
-        let addr_network = Network::from(addr.network);
+    let is_expected_net = addr.is_valid_for_network(BNetwork::from(network));
 
-        // Testnet, Regtest and Signet all share the same version bytes,
-        // `addr_network` will be detected as Testnet for all of them.
-        addr_network == network
-            || (addr_network == Network::Testnet
-                && matches!(
-                    network,
-                    Network::Regtest | Network::Signet | Network::Testnet4
-                ))
-    };
+    // let is_expected_net = {
+    //     let addr_network = Network::from(addr.network);
+
+    //     // Testnet, Regtest and Signet all share the same version bytes,
+    //     // `addr_network` will be detected as Testnet for all of them.
+    //     addr_network == network
+    //         || (addr_network == Network::Testnet
+    //             && matches!(
+    //                 network,
+    //                 Network::Regtest | Network::Signet | Network::Testnet4
+    //             ))
+    // };
 
     #[cfg(feature = "liquid")]
     let is_expected_net = addr.params == network.address_params();
@@ -1917,7 +1931,8 @@ fn address_to_scripthash(addr: &str, network: Network) -> Result<FullHash, HttpE
     if !is_expected_net {
         bail!(HttpError::from("Address on invalid network".to_string()))
     }
-
+    #[cfg(not(feature = "liquid"))]
+    let addr = addr.require_network(BNetwork::from(network))?;
     Ok(compute_script_hash(&addr.script_pubkey()))
 }
 
@@ -1959,8 +1974,8 @@ impl From<ParseIntError> for HttpError {
         HttpError::from("Invalid number".to_string())
     }
 }
-impl From<HashError> for HttpError {
-    fn from(_e: HashError) -> Self {
+impl From<FromSliceError> for HttpError {
+    fn from(_e: FromSliceError) -> Self {
         //HttpError::from(e.description().to_string())
         HttpError::from("Invalid hash string".to_string())
     }
@@ -1971,14 +1986,14 @@ impl From<FromHexError> for HttpError {
         HttpError::from("Invalid hex string".to_string())
     }
 }
-impl From<bitcoin::hashes::hex::Error> for HttpError {
-    fn from(_e: bitcoin::hashes::hex::Error) -> Self {
+impl From<bitcoin::hex::HexToArrayError> for HttpError {
+    fn from(_e: bitcoin::hex::HexToArrayError) -> Self {
         //HttpError::from(e.description().to_string())
         HttpError::from("Invalid hex string".to_string())
     }
 }
-impl From<bitcoin::util::address::Error> for HttpError {
-    fn from(_e: bitcoin::util::address::Error) -> Self {
+impl From<bitcoin::address::ParseError> for HttpError {
+    fn from(_e: bitcoin::address::ParseError) -> Self {
         //HttpError::from(e.description().to_string())
         HttpError::from("Invalid Bitcoin address".to_string())
     }
@@ -2018,7 +2033,10 @@ impl From<address::AddressError> for HttpError {
 
 #[cfg(test)]
 mod tests {
+    use crate::chain::BlockHeader;
     use crate::rest::HttpError;
+    use bitcoin::block::Version;
+    use bitcoin::CompactTarget;
     use serde_json::Value;
     use std::collections::HashMap;
 
@@ -2185,8 +2203,8 @@ mod tests {
             ),
         ];
 
-        let to_bh = |b| bitcoin::BlockHeader {
-            version: 1,
+        let to_bh = |b| BlockHeader {
+            version: Version::from_consensus(1),
             prev_blockhash: "0000000000000000000000000000000000000000000000000000000000000000"
                 .parse()
                 .unwrap(),
@@ -2194,7 +2212,7 @@ mod tests {
                 .parse()
                 .unwrap(),
             time: 0,
-            bits: b,
+            bits: CompactTarget::from_consensus(b),
             nonce: 0,
         };
 

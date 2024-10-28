@@ -20,13 +20,13 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Mutex;
 use std::thread::{self, ThreadId};
 
-use crate::chain::BlockHeader;
+use bitcoin::block::Header;
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::SocketAddr;
 
 pub type Bytes = Vec<u8>;
-pub type HeaderMap = HashMap<Sha256dHash, BlockHeader>;
+pub type HeaderMap = HashMap<Sha256dHash, Header>;
 
 // TODO: consolidate serialization/deserialize code for bincode/bitcoin.
 const HASH_LEN: usize = 32;
@@ -194,12 +194,12 @@ pub fn create_socket(addr: &SocketAddr) -> Socket {
 ///
 /// Copied from https://github.com/rust-bitcoin/rust-bitcoincore-rpc/blob/master/json/src/lib.rs
 pub mod serde_hex {
-    use bitcoin::hashes::hex::{FromHex, ToHex};
+    use bitcoin::hashes::hex::FromHex;
     use serde::de::Error;
     use serde::{Deserializer, Serializer};
-
     pub fn serialize<S: Serializer>(b: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&b.to_hex())
+        let hex_str = hex::encode(b);
+        s.serialize_str(hex_str.as_str())
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
@@ -208,14 +208,14 @@ pub mod serde_hex {
     }
 
     pub mod opt {
-        use bitcoin::hashes::hex::{FromHex, ToHex};
+        use bitcoin::hashes::hex::FromHex;
         use serde::de::Error;
         use serde::{Deserializer, Serializer};
 
         pub fn serialize<S: Serializer>(b: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
             match *b {
                 None => s.serialize_none(),
-                Some(ref b) => s.serialize_str(&b.to_hex()),
+                Some(ref b) => s.serialize_str(hex::encode(b).as_str()),
             }
         }
 

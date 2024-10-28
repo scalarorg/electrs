@@ -1,7 +1,9 @@
-use crate::chain::{BlockHash, BlockHeader};
+use crate::chain::BlockHash;
 use crate::errors::*;
 use crate::new_index::BlockEntry;
 
+use bitcoin::block::Header;
+use bitcoin::hashes::Hash;
 use std::collections::HashMap;
 use std::fmt;
 use std::iter::FromIterator;
@@ -32,7 +34,7 @@ impl From<&HeaderEntry> for BlockId {
 pub struct HeaderEntry {
     height: usize,
     hash: BlockHash,
-    header: BlockHeader,
+    header: Header,
 }
 
 impl HeaderEntry {
@@ -40,7 +42,7 @@ impl HeaderEntry {
         &self.hash
     }
 
-    pub fn header(&self) -> &BlockHeader {
+    pub fn header(&self) -> &Header {
         &self.header
     }
 
@@ -73,12 +75,12 @@ impl HeaderList {
         HeaderList {
             headers: vec![],
             heights: HashMap::new(),
-            tip: BlockHash::default(),
+            tip: BlockHash::all_zeros(),
         }
     }
 
     pub fn new(
-        mut headers_map: HashMap<BlockHash, BlockHeader>,
+        mut headers_map: HashMap<BlockHash, Header>,
         tip_hash: BlockHash,
         allow_missing: bool,
     ) -> HeaderList {
@@ -89,8 +91,8 @@ impl HeaderList {
         );
 
         let mut blockhash = tip_hash;
-        let mut headers_chain: Vec<BlockHeader> = vec![];
-        let null_hash = BlockHash::default();
+        let mut headers_chain: Vec<Header> = vec![];
+        let null_hash = BlockHash::all_zeros();
 
         while blockhash != null_hash {
             let header = headers_map.remove(&blockhash);
@@ -122,11 +124,11 @@ impl HeaderList {
         headers
     }
 
-    pub fn order(&self, new_headers: Vec<BlockHeader>) -> Vec<HeaderEntry> {
+    pub fn order(&self, new_headers: Vec<Header>) -> Vec<HeaderEntry> {
         // header[i] -> header[i-1] (i.e. header.last() is the tip)
         struct HashedHeader {
             blockhash: BlockHash,
-            header: BlockHeader,
+            header: Header,
         }
         let hashed_headers =
             Vec::<HashedHeader>::from_iter(new_headers.into_iter().map(|header| HashedHeader {
@@ -143,7 +145,7 @@ impl HeaderList {
             Some(h) => h.header.prev_blockhash,
             None => return vec![], // hashed_headers is empty
         };
-        let null_hash = BlockHash::default();
+        let null_hash = BlockHash::all_zeros();
         let new_height: usize = if prev_blockhash == null_hash {
             0
         } else {
@@ -182,7 +184,7 @@ impl HeaderList {
                 let expected_prev_blockhash = if height > 0 {
                     *self.headers[height - 1].hash()
                 } else {
-                    BlockHash::default()
+                    BlockHash::all_zeros()
                 };
                 assert_eq!(entry.header().prev_blockhash, expected_prev_blockhash);
                 height
@@ -228,7 +230,10 @@ impl HeaderList {
     pub fn tip(&self) -> &BlockHash {
         assert_eq!(
             self.tip,
-            self.headers.last().map(|h| *h.hash()).unwrap_or_default()
+            self.headers
+                .last()
+                .map(|h| *h.hash())
+                .unwrap_or_else(|| BlockHash::all_zeros())
         );
         &self.tip
     }
@@ -306,7 +311,7 @@ impl From<&BlockEntry> for BlockMeta {
     fn from(b: &BlockEntry) -> BlockMeta {
         BlockMeta {
             tx_count: b.block.txdata.len() as u32,
-            weight: b.block.weight() as u32,
+            weight: b.block.weight().to_wu() as u32,
             size: b.size,
         }
     }
