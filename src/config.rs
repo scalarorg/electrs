@@ -66,6 +66,8 @@ pub struct Config {
     pub rest_max_mempool_page_size: usize,
     pub rest_max_mempool_txid_page_size: usize,
     pub allow_missing: bool,
+    pub vault_tag: Vec<u8>,
+    pub vault_version: u8,
     pub start_height: usize,
     pub stop_height: usize, //For debug purposes, set a stop height to limit the indexer
     #[cfg(feature = "liquid")]
@@ -286,6 +288,18 @@ impl Config {
                 Arg::with_name("allow_missing")
                     .long("allow-missing")
                     .help("Allow missing outpoint for quickly debuging"),
+            )
+            .arg(
+                Arg::with_name("vault_tag")
+                    .long("vault-tag")
+                    .help("Vault tag")
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::with_name("vault_version")
+                    .long("vault-version")
+                    .help("Vault version")
+                    .takes_value(true),
             )
             .arg(
                 Arg::with_name("start_height")
@@ -590,6 +604,14 @@ impl Config {
                 },
             ),
             allow_missing: m.is_present("allow_missing"),
+            vault_tag: m
+                .value_of("vault_tag")
+                .and_then(|s| hex::decode(s).ok())
+                .unwrap_or_default(),
+            vault_version: m
+                .value_of("vault_version")
+                .map(|s| s.parse().unwrap())
+                .unwrap_or_default(),
             start_height: m
                 .value_of("start_height")
                 .and_then(|s| s.parse().ok())

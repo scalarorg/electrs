@@ -180,6 +180,7 @@ pub struct Indexer {
     flush: DBFlush,
     from: FetchFrom,
     iconfig: IndexerConfig,
+    vault_indexer: vault::VaultIndexer,
     duration: HistogramVec,
     tip_metric: Gauge,
 }
@@ -228,6 +229,11 @@ impl Indexer {
             flush: DBFlush::Disable,
             from,
             iconfig: IndexerConfig::from(config),
+            vault_indexer: vault::VaultIndexer::new(
+                config.network_type,
+                config.vault_tag.clone(),
+                config.vault_version,
+            ),
             duration: metrics.histogram_vec(
                 HistogramOpts::new("index_duration", "Index update duration (in seconds)"),
                 &["step"],
@@ -366,7 +372,11 @@ impl Indexer {
     }
 
     fn index(&self, blocks: &[BlockEntry]) {
-        debug!("Indexing {} blocks with Indexer", blocks.len());
+        debug!(
+            "Indexing {} blocks from {} with Indexer",
+            blocks.len(),
+            blocks[0].entry.height()
+        );
         let previous_txos_map = {
             let _timer = self.start_timer("index_lookup");
             lookup_txos(
@@ -388,10 +398,16 @@ impl Indexer {
                     panic!("cannot index block {} (missing from store)", blockhash);
                 }
             }
-            index_blocks(blocks, &previous_txos_map, &self.iconfig)
+
+            (
+                index_blocks(blocks, &previous_txos_map, &self.iconfig),
+                self.vault_indexer.index_blocks(blocks),
+            )
         };
         self.store.history_db.write(history_rows, self.flush);
-        self.store.vault_db.write(vault_rows, self.flush);
+        if !vault_rows.is_empty() {
+            self.store.vault_db.write(vault_rows, self.flush);
+        }
     }
 }
 
@@ -1399,12 +1415,11 @@ fn index_blocks(
     block_entries: &[BlockEntry],
     previous_txos_map: &HashMap<OutPoint, TxOut>,
     iconfig: &IndexerConfig,
-) -> (Vec<DBRow>, Vec<DBRow>) {
+) -> Vec<DBRow> {
     block_entries
         .par_iter() // serialization is CPU-intensive
         .map(|b| {
             let mut rows = vec![];
-            let mut vault_rows = vec![];
             for (idx, tx) in b.block.txdata.iter().enumerate() {
                 let height = b.entry.height() as u32;
                 index_transaction(
@@ -1415,10 +1430,9 @@ fn index_blocks(
                     &mut rows,
                     iconfig,
                 );
-                vault::try_index_transaction(tx, height, idx as u16, &mut vault_rows);
             }
             rows.push(BlockRow::new_done(full_hash(&b.entry.hash()[..])).into_row()); // mark block as "indexed"
-            (rows, vault_rows)
+            rows
         })
         .flatten()
         .collect()

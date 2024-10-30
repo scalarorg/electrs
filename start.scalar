@@ -173,6 +173,8 @@ esac
 		--jsonrpc-import \
 		--start-height "${START_HEIGHT}" \
 		--stop-height "${STOP_HEIGHT}" \
+		--vault-tag "${VAULT_TAG}" \
+		--vault-version "${VAULT_VERSION}" \
 		-vvvv
 	sleep 1
 # done
