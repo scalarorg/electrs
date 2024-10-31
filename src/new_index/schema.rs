@@ -34,7 +34,10 @@ use crate::new_index::fetch::{start_fetcher, BlockEntry, FetchFrom};
 #[cfg(feature = "liquid")]
 use crate::elements::{asset, peg};
 
-use super::{db::ReverseScanGroupIterator, vault};
+use super::{
+    db::ReverseScanGroupIterator,
+    vault::{self, VaultStore},
+};
 
 const MIN_HISTORY_ITEMS_TO_CACHE: usize = 100;
 
@@ -43,7 +46,7 @@ pub struct Store {
     txstore_db: DB,
     history_db: DB,
     cache_db: DB,
-    vault_db: DB,
+    vault_store: Arc<VaultStore>,
     added_blockhashes: RwLock<HashSet<BlockHash>>,
     indexed_blockhashes: RwLock<HashSet<BlockHash>>,
     indexed_headers: RwLock<HeaderList>,
@@ -61,7 +64,7 @@ impl Store {
 
         let cache_db = DB::open(&path.join("cache"), config);
 
-        let vault_db = DB::open(&path.join("vault"), config);
+        let vault_store = Arc::new(VaultStore::open(path, config));
 
         let headers = if let Some(tip_hash) = txstore_db.get(b"t") {
             let tip_hash = deserialize(&tip_hash).expect("invalid chain tip in `t`");
@@ -80,7 +83,7 @@ impl Store {
             txstore_db,
             history_db,
             cache_db,
-            vault_db,
+            vault_store,
             added_blockhashes: RwLock::new(added_blockhashes),
             indexed_blockhashes: RwLock::new(indexed_blockhashes),
             indexed_headers: RwLock::new(headers),
@@ -99,8 +102,8 @@ impl Store {
         &self.cache_db
     }
 
-    pub fn vault_db(&self) -> &DB {
-        &self.vault_db
+    pub fn vault_store(&self) -> Arc<VaultStore> {
+        Arc::clone(&self.vault_store)
     }
 
     pub fn done_initial_sync(&self) -> bool {
@@ -224,16 +227,18 @@ pub struct ChainQuery {
 // TODO: &[Block] should be an iterator / a queue.
 impl Indexer {
     pub fn open(store: Arc<Store>, from: FetchFrom, config: &Config, metrics: &Metrics) -> Self {
+        let vault_indexer = vault::VaultIndexer::new(
+            config.network_type,
+            config.vault_tag.clone(),
+            config.vault_version,
+            store.clone(),
+        );
         Indexer {
             store,
             flush: DBFlush::Disable,
             from,
             iconfig: IndexerConfig::from(config),
-            vault_indexer: vault::VaultIndexer::new(
-                config.network_type,
-                config.vault_tag.clone(),
-                config.vault_version,
-            ),
+            vault_indexer,
             duration: metrics.histogram_vec(
                 HistogramOpts::new("index_duration", "Index update duration (in seconds)"),
                 &["step"],
@@ -385,7 +390,7 @@ impl Indexer {
                 self.iconfig.allow_missing,
             )
         };
-        let (history_rows, vault_rows) = {
+        let history_rows = {
             let _timer = self.start_timer("index_process");
             let added_blockhashes = self.store.added_blockhashes.read().unwrap();
             for b in blocks {
@@ -398,16 +403,13 @@ impl Indexer {
                     panic!("cannot index block {} (missing from store)", blockhash);
                 }
             }
-
-            (
-                index_blocks(blocks, &previous_txos_map, &self.iconfig),
-                self.vault_indexer.index_blocks(blocks),
-            )
+            //Index and store vault txs in second phase
+            //The first phase populates the txstore database,
+            // the second phase populates the history database and vault store.
+            self.vault_indexer.index_blocks(blocks);
+            index_blocks(blocks, &previous_txos_map, &self.iconfig)
         };
         self.store.history_db.write(history_rows, self.flush);
-        if !vault_rows.is_empty() {
-            self.store.vault_db.write(vault_rows, self.flush);
-        }
     }
 }
 

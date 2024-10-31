@@ -1,10 +1,10 @@
 mod server;
 pub use server::RPC;
-
 #[cfg(feature = "electrum-discovery")]
 mod client;
 #[cfg(feature = "electrum-discovery")]
 mod discovery;
+mod vault;
 #[cfg(feature = "electrum-discovery")]
 pub use {client::Client, discovery::DiscoveryManager};
 

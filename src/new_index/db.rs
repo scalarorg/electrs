@@ -170,6 +170,13 @@ impl DB {
         self.db.raw_iterator()
     }
 
+    pub fn forward_iterator_from(&self, start_at: &[u8]) -> rocksdb::DBIterator {
+        self.db.iterator(rocksdb::IteratorMode::From(
+            start_at,
+            rocksdb::Direction::Forward,
+        ))
+    }
+
     pub fn iter_scan(&self, prefix: &[u8]) -> ScanIterator {
         ScanIterator {
             prefix: prefix.to_vec(),

@@ -30,6 +30,7 @@ use crate::config::{Config, VERSION_STRING};
 use crate::electrum::{get_electrum_height, ProtocolVersion};
 use crate::errors::*;
 use crate::metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
+use crate::new_index::vault::TxVaultInfo;
 use crate::new_index::{Query, Utxo};
 use crate::util::electrum_merkle::{get_header_merkle_proof, get_id_from_pos, get_tx_merkle_proof};
 use crate::util::{
@@ -42,6 +43,8 @@ const MAX_HEADERS: usize = 2016;
 
 #[cfg(feature = "electrum-discovery")]
 use crate::electrum::{DiscoveryManager, ServerFeatures};
+
+use super::vault::VaultServer;
 
 // TODO: Sha256dHash should be a generic hash-container (since script hash is single SHA256)
 fn hash_from_value(val: Option<&Value>) -> Result<Sha256dHash> {
@@ -103,12 +106,16 @@ fn get_status_hash(txs: Vec<(Txid, Option<BlockId>)>, query: &Query) -> Option<F
 struct Connection {
     query: Arc<Query>,
     last_header_entry: Option<HeaderEntry>,
+    //Store last vault key for subscription
+    last_vault_entry: Option<TxVaultInfo>,
     status_hashes: HashMap<Sha256dHash, Value>, // ScriptHash -> StatusHash
     stream: ConnectionStream,
     chan: SyncChannel<Message>,
     stats: Arc<Stats>,
     txs_limit: usize,
     die_please: Option<Receiver<()>>,
+    // Vault
+    vault: VaultServer,
     #[cfg(feature = "electrum-discovery")]
     discovery: Option<Arc<DiscoveryManager>>,
 }
@@ -122,15 +129,18 @@ impl Connection {
         die_please: Receiver<()>,
         #[cfg(feature = "electrum-discovery")] discovery: Option<Arc<DiscoveryManager>>,
     ) -> Connection {
+        let vault = VaultServer::new(query.clone());
         Connection {
             query,
             last_header_entry: None, // disable header subscription for now
+            last_vault_entry: None,  // disable vault subscription for now
             status_hashes: HashMap::new(),
             stream,
             chan: SyncChannel::new(10),
             stats,
             txs_limit,
             die_please: Some(die_please),
+            vault,
             #[cfg(feature = "electrum-discovery")]
             discovery,
         }
@@ -416,7 +426,27 @@ impl Connection {
             "tx_hash": txid,
             "merkle" : merkle}))
     }
-
+    fn vault_transactions_get(&mut self, params: &[Value]) -> Result<Value> {
+        let hash = hash_from_value(params.first())?;
+        let length = usize_from_value(params.get(1), "length")?;
+        //Get latest vault transaction form storage
+        let transactions = self.vault.get_transactions(&hash, length)?;
+        //Add to subscriptions
+        // let hex_header = hex::encode(serialize(entry.header()));
+        // self.last_header_entry = Some(entry);
+        let result = json!(transactions);
+        Ok(result)
+    }
+    fn vault_transactions_subscribe(&mut self, _params: &[Value]) -> Result<Value> {
+        // let _height = usize_from_value(params.first(), "hash")?;
+        //Get latest vault transaction form storage
+        let latest_vault_tx = self.vault.get_lastest_transaction()?;
+        //Add to subscriptions
+        // let hex_header = hex::encode(serialize(entry.header()));
+        let result = json!(latest_vault_tx);
+        self.last_vault_entry = Some(latest_vault_tx);
+        Ok(result)
+    }
     fn handle_command(&mut self, method: &str, params: &[Value], id: &Value) -> Result<Value> {
         let timer = self
             .stats
@@ -449,7 +479,9 @@ impl Connection {
             "server.features" => self.server_features(),
             #[cfg(feature = "electrum-discovery")]
             "server.add_peer" => self.server_add_peer(params),
-
+            // For vault transactions
+            "vault.transactions.subscribe" => self.vault_transactions_subscribe(params),
+            "vault.transactions.get" => self.vault_transactions_get(params),
             &_ => bail!("unknown method {} {:?}", method, params),
         };
         timer.observe_duration();
@@ -486,6 +518,17 @@ impl Connection {
                     "jsonrpc": "2.0",
                     "method": "blockchain.headers.subscribe",
                     "params": [header]}));
+            }
+        }
+        //Scalar: Add vault subscription
+        if let Some(ref mut last_vault_tx) = self.last_vault_entry {
+            let vault_tx = self.vault.get_lastest_transaction()?;
+            if last_vault_tx.txid != vault_tx.txid {
+                *last_vault_tx = vault_tx;
+                result.push(json!({
+                    "jsonrpc": "2.0",
+                    "method": "vault.transactions.subscribe",
+                    "params": []}));
             }
         }
         for (script_hash, status_hash) in self.status_hashes.iter_mut() {

@@ -4,7 +4,7 @@ mod mempool;
 pub mod precache;
 mod query;
 pub mod schema;
-mod vault;
+pub mod vault;
 pub use self::db::{DBRow, DB};
 pub use self::fetch::{BlockEntry, FetchFrom};
 pub use self::mempool::Mempool;

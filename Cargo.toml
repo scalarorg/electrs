@@ -23,6 +23,8 @@ name = "electrs"
 default = []
 liquid = ["elements"]
 electrum-discovery = ["electrum-client"]
+# TODO: add scalar-vault feature with bitcoin-vault dependency
+scalar-vault = []
 
 [dependencies]
 arrayref = "0.3.6"
