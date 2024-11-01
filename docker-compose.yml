@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      image: scalarorg/electrs
     restart: on-failure
 
     ports:
@@ -13,13 +14,29 @@ services:
 
     entrypoint:
       /bin/electrs
+    env_file:
+      - .env
     command: |
-      --address-search
-      --cookie mempool:mempool
-      --db-dir /electrs
+      --network "${NETWORK}"
+      --daemon-dir "${HOME}"
+      --db-dir "${DB_FOLDER}
+      --main-loop-delay "${MAIN_LOOP_DELAY}
+      --electrum-rpc-addr "${ELECTRUM_RPC_ADDR}"
+      --cookie "${rpcuser}:${rpcpassword}"
       --cors '*'
+      --magic "${MAGIC}"
+      --address-search
+      --utxos-limit "${UTXOS_LIMIT}"
+      --electrum-txs-limit "${ELECTRUM_TXS_LIMIT}"
+      --daemon-rpc-addr "${DAEMON_RPC_ADDR}"
+      --jsonrpc-import
+      --start-height "${START_HEIGHT}"
+      --stop-height "${STOP_HEIGHT}"
+      --vault-tag "${VAULT_TAG}"
+      --vault-version "${VAULT_VERSION}"
+      -vvvv
     volumes:
-    - 'electrs_data:/electrs'
+      - 'electrs_data:/electrs'
 
 volumes:
   electrs_data:

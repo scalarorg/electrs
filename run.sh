@@ -16,7 +16,7 @@ testnet4() {
     # export DAEMON_RPC_ADDR="192.168.1.254:48332"
     export DAEMON_CONF_PATH=$DIR/testnet4.env
     export ELECTRUM_RPC_ADDR="0.0.0.0:60001"
-    export DB_FOLDER=${HOME}/electrs-testnet4
+    export DB_FOLDER=./electrs
     # Index from genesis
     export START_HEIGHT=0
     # stop height it not working yet
