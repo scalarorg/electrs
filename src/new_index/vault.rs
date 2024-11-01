@@ -31,6 +31,11 @@ pub struct TxVaultInfo {
     pub txid: Txid,
     pub tx_position: u32,
     pub amount: u64,
+    pub staker_address: Option<String>,
+    pub staker_pubkey: Option<String>,
+    // the Hex content of the transaction
+    pub tx_content: String,
+    pub timestamp: u32,
     pub change_amount: Option<u64>,
     pub change_address: Option<String>,
     pub destination_chain_id: DestinationChainId,
@@ -119,12 +124,13 @@ impl From<VaultTransaction> for TxVaultRow {
     fn from(vault_tx: VaultTransaction) -> Self {
         let VaultTransaction {
             txid,
+            staker_address,
+            staker_pubkey,
+            tx_content,
             inputs,
             lock_tx,
             return_tx,
             change_tx,
-            confirmed_height,
-            tx_position,
         } = vault_tx;
         let mut writer = vec![];
         txid.consensus_encode(&mut writer).unwrap();
@@ -136,10 +142,14 @@ impl From<VaultTransaction> for TxVaultRow {
                 (None, None)
             };
         let info = TxVaultInfo {
-            confirmed_height,
+            confirmed_height: 0,
             txid,
-            tx_position,
+            tx_position: 0,
             amount: lock_tx.amount.to_sat(),
+            staker_address,
+            staker_pubkey,
+            tx_content,
+            timestamp: 0,
             change_amount,
             change_address,
             destination_chain_id: return_tx.destination_chain_id,
@@ -260,7 +270,8 @@ impl VaultIndexer {
                 let mut rows = vec![];
                 for (idx, tx) in b.block.txdata.iter().enumerate() {
                     let height = b.entry.height() as u32;
-                    self.index_transaction(tx, height, idx as u32, &mut rows);
+                    let block_timestamp = b.entry.header().time;
+                    self.index_transaction(tx, height, idx as u32, block_timestamp, &mut rows);
                 }
                 rows
             })
@@ -275,17 +286,20 @@ impl VaultIndexer {
         tx: &Transaction,
         confirmed_height: u32,
         tx_position: u32,
+        block_timestamp: u32,
         rows: &mut Vec<DBRow>,
     ) {
         match self.staking_parser.parse(tx) {
-            Ok(mut vault_tx) => {
-                vault_tx.confirmed_height = confirmed_height;
-                vault_tx.tx_position = tx_position;
+            Ok(vault_tx) => {
+                let mut vault_row = TxVaultRow::from(vault_tx);
+                vault_row.info.confirmed_height = confirmed_height;
+                vault_row.info.tx_position = tx_position;
+                vault_row.info.timestamp = block_timestamp;
                 debug!(
                     "Parsed staking transaction: {:?} in block {}",
-                    vault_tx, confirmed_height
+                    vault_row.info, confirmed_height
                 );
-                let vault_row = TxVaultRow::from(vault_tx);
+
                 rows.push(vault_row.into_row());
             }
             Err(_e) => {
@@ -335,7 +349,7 @@ mod tests {
             })
         {
             let mut rows = vec![];
-            vault_indexer.index_transaction(&tx, 1, 0, &mut rows);
+            vault_indexer.index_transaction(&tx, 1, 0, 0, &mut rows);
             assert_eq!(rows.len(), 1);
             let vault_row = TxVaultRow::from_row(rows.pop().unwrap());
             assert_eq!(vault_row.info.amount, test_data.amount);

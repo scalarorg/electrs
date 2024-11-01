@@ -4,7 +4,7 @@
 DAEMON=bitcoin
 NETWORK=mainnet
 FEATURES=default
-DB_FOLDER=${HOME}/electrs
+DB_FOLDER=${DB_FOLDER:-${HOME}/electrs}
 NODENAME=$(hostname|cut -d . -f1)
 LOCATION=$(hostname|cut -d . -f2)
 

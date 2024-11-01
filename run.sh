@@ -12,10 +12,11 @@ testnet3() {
     $DIR/start testnet
 }
 testnet4() {
-    # export DAEMON_RPC_ADDR="127.0.0.1:48332"
-    export DAEMON_RPC_ADDR="192.168.1.254:48332"
+    export DAEMON_RPC_ADDR="127.0.0.1:48332"
+    # export DAEMON_RPC_ADDR="192.168.1.254:48332"
     export DAEMON_CONF_PATH=$DIR/testnet4.env
-    export ELECTRUM_RPC_ADDR="127.0.0.1:60001"
+    export ELECTRUM_RPC_ADDR="0.0.0.0:60001"
+    export DB_FOLDER=${HOME}/electrs-testnet4
     # Index from genesis
     export START_HEIGHT=0
     # stop height it not working yet

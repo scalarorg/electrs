@@ -256,6 +256,7 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.3",
  "dotenv",
+ "hex",
  "lazy_static",
  "serde",
  "thiserror",
