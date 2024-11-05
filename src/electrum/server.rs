@@ -427,10 +427,15 @@ impl Connection {
             "merkle" : merkle}))
     }
     fn vault_transactions_get(&mut self, params: &[Value]) -> Result<Value> {
-        let hash = hash_from_value(params.first())?;
+        let hash = params
+            .first()
+            .and_then(|value| value.as_str())
+            .map(|v| hex::decode(v))
+            .transpose()
+            .map_err(|e| Error::from(e.to_string()))?;
         let length = usize_from_value(params.get(1), "length")?;
         //Get latest vault transaction form storage
-        let transactions = self.vault.get_transactions(&hash, length)?;
+        let transactions = self.vault.get_transactions_from_hash(hash, length)?;
         //Add to subscriptions
         // let hex_header = hex::encode(serialize(entry.header()));
         // self.last_header_entry = Some(entry);

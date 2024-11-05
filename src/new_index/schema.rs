@@ -300,16 +300,16 @@ impl Indexer {
         let new_headers = self.get_new_headers(&daemon, &tip)?;
         // 20241021:Scalar
         // filter the headers are in the range
-        info!(
-            "Index block range: {} - {}",
-            self.iconfig.start_height, self.iconfig.stop_height
-        );
-        let new_headers = new_headers
-            .into_iter()
-            .filter(|h| {
-                h.height() >= self.iconfig.start_height && h.height() <= self.iconfig.stop_height
-            })
-            .collect::<Vec<_>>();
+        // info!(
+        //     "Index block range: {} - {}",
+        //     self.iconfig.start_height, self.iconfig.stop_height
+        // );
+        // let new_headers = new_headers
+        //     .into_iter()
+        //     .filter(|h| {
+        //         h.height() >= self.iconfig.start_height && h.height() <= self.iconfig.stop_height
+        //     })
+        //     .collect::<Vec<_>>();
         let to_add = self.headers_to_add(&new_headers);
         debug!(
             "adding transactions from {} blocks using {:?}",
