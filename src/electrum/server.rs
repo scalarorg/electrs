@@ -442,8 +442,8 @@ impl Connection {
         let result = json!(transactions);
         Ok(result)
     }
-    fn vault_transactions_subscribe(&mut self, _params: &[Value]) -> Result<Value> {
-        // let _height = usize_from_value(params.first(), "hash")?;
+    fn vault_transactions_subscribe(&mut self, params: &[Value]) -> Result<Value> {
+        let _last_vault_tx_hash: Option<String> = params.first().map(|v| v.to_string());
         //Get latest vault transaction form storage
         let latest_vault_tx = self.vault.get_lastest_transaction()?;
         //Add to subscriptions
@@ -526,16 +526,28 @@ impl Connection {
             }
         }
         //Scalar: Add vault subscription
-        if let Some(ref mut last_vault_tx) = self.last_vault_entry {
-            let vault_tx = self.vault.get_lastest_transaction()?;
-            if last_vault_tx.txid != vault_tx.txid {
-                *last_vault_tx = vault_tx;
-                result.push(json!({
-                    "jsonrpc": "2.0",
-                    "method": "vault.transactions.subscribe",
-                    "params": []}));
+        if let Ok(vault_tx) = self.vault.get_lastest_transaction() {
+            debug!("Latest vault tx: {:?}", &vault_tx);
+            let mut new_tx = false;
+            if let Some(ref mut last_vault_tx) = self.last_vault_entry {
+                if last_vault_tx.txid != vault_tx.txid {
+                    *last_vault_tx = vault_tx;
+                    new_tx = true;
+                }
+            } else {
+                self.last_vault_entry = Some(vault_tx);
+                new_tx = true;
             }
-        }
+            if new_tx {
+                debug!("Add request for latest vaultx");
+                result.push(json!({
+                        "jsonrpc": "2.0",
+                        "method": "vault.transactions.subscribe",
+                        "params": []}));
+            }
+        } else {
+            debug!("Latest vault transaction not found");
+        };
         for (script_hash, status_hash) in self.status_hashes.iter_mut() {
             let history_txids = get_history(&self.query, &script_hash[..], self.txs_limit)?;
             let new_status_hash = get_status_hash(history_txids, &self.query)
@@ -556,6 +568,7 @@ impl Connection {
     fn send_values(&mut self, values: &[Value]) -> Result<()> {
         for value in values {
             let line = value.to_string() + "\n";
+            debug!("Connection.send_values# {:?}", &line);
             self.stream
                 .write_all(line.as_bytes())
                 .chain_err(|| format!("failed to send {}", value))?;
@@ -572,12 +585,14 @@ impl Connection {
                     match msg {
                         Message::Request(line) => {
                             let result = self.handle_line(&line);
+                            trace!("Handle Request {:?} with result {:?}", &line, &result);
                             self.send_values(&[result])?
                         }
                         Message::PeriodicUpdate => {
                             let values = self
                                 .update_subscriptions()
                                 .chain_err(|| "failed to update subscriptions")?;
+                            trace!("Handle PeriodicUpdate with values {:?}", &values);
                             self.send_values(&values)?
                         }
                         Message::Done => {
