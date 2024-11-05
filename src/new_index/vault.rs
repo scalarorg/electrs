@@ -325,18 +325,18 @@ impl VaultIndexer {
             let dbrows = vault_rows.into_iter().map(|tx| tx.into_row()).collect();
             let vault_store = self.store.vault_store();
             vault_store.flush_vault_tx(dbrows);
-            //Check insert order
-            let mut iter = vault_store.vault_txs().raw_iterator();
-            iter.seek_to_first();
-            while iter.valid() {
-                let Some(value) = iter.value() else {
-                    break;
-                };
-                if let Ok(tx_vault) = TxVaultInfo::try_from(&value) {
-                    debug!("tx_vault: {:?}", tx_vault);
-                };
-                iter.next();
-            }
+            // Check insert order
+            // let mut iter = vault_store.vault_txs().raw_iterator();
+            // iter.seek_to_first();
+            // while iter.valid() {
+            //     let Some(value) = iter.value() else {
+            //         break;
+            //     };
+            //     if let Ok(tx_vault) = TxVaultInfo::try_from(&value) {
+            //         debug!("tx_vault: {:?}", tx_vault);
+            //     };
+            //     iter.next();
+            // }
         }
     }
     fn index_transaction(
