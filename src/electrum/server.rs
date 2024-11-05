@@ -527,7 +527,10 @@ impl Connection {
         }
         //Scalar: Add vault subscription
         if let Ok(vault_tx) = self.vault.get_lastest_transaction() {
-            debug!("Latest vault tx: {:?}", &vault_tx);
+            debug!(
+                "Latest vault tx at {:?}:{:?} {:?}",
+                &vault_tx.confirmed_height, &vault_tx.tx_position, &vault_tx.txid
+            );
             let mut new_tx = false;
             if let Some(ref mut last_vault_tx) = self.last_vault_entry {
                 if last_vault_tx.txid != vault_tx.txid {
@@ -568,7 +571,6 @@ impl Connection {
     fn send_values(&mut self, values: &[Value]) -> Result<()> {
         for value in values {
             let line = value.to_string() + "\n";
-            debug!("Connection.send_values# {:?}", &line);
             self.stream
                 .write_all(line.as_bytes())
                 .chain_err(|| format!("failed to send {}", value))?;
@@ -592,7 +594,9 @@ impl Connection {
                             let values = self
                                 .update_subscriptions()
                                 .chain_err(|| "failed to update subscriptions")?;
-                            trace!("Handle PeriodicUpdate with values {:?}", &values);
+                            if !values.is_empty() {
+                                trace!("Handle PeriodicUpdate with values {:?}", &values);
+                            }
                             self.send_values(&values)?
                         }
                         Message::Done => {
@@ -670,10 +674,13 @@ impl Connection {
                     bail!("invalid request - maybe SSL-encrypted data?: {:?}", line)
                 }
                 match String::from_utf8(line) {
-                    Ok(req) => tx
-                        .send(Message::Request(req))
-                        .chain_err(|| "channel closed")?,
+                    Ok(req) => {
+                        trace!("Handle Request {:?} ", &req);
+                        tx.send(Message::Request(req))
+                            .chain_err(|| "channel closed")?
+                    }
                     Err(err) => {
+                        trace!("Handle Request failed {:?}", &err);
                         let _ = tx.send(Message::Done);
                         bail!("invalid UTF8: {}", err)
                     }
