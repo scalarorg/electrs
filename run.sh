@@ -22,7 +22,7 @@ testnet4() {
     # stop height it not working yet
     # export STOP_HEIGHT=52650
     # Hex without 0x prefix tag
-    export VAULT_TAG="01020304"
+    export VAULT_TAG="53180104"
     export VAULT_VERSION=0
     $DIR/start.scalar testnet4
 }

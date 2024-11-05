@@ -335,6 +335,7 @@ impl VaultIndexer {
                 if let Ok(tx_vault) = TxVaultInfo::try_from(&value) {
                     debug!("tx_vault: {:?}", tx_vault);
                 };
+                iter.next();
             }
         }
     }
