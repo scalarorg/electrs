@@ -323,7 +323,19 @@ impl VaultIndexer {
             //Reorder the rows by height and tx_position
             //vault_rows.par_sort_by_key(|row| (row.info.confirmed_height, row.info.tx_position));
             let dbrows = vault_rows.into_iter().map(|tx| tx.into_row()).collect();
-            self.store.vault_store().flush_vault_tx(dbrows);
+            let vault_store = self.store.vault_store();
+            vault_store.flush_vault_tx(dbrows);
+            //Check insert order
+            let mut iter = vault_store.vault_txs().raw_iterator();
+            iter.seek_to_first();
+            while iter.valid() {
+                let Some(value) = iter.value() else {
+                    break;
+                };
+                if let Ok(tx_vault) = TxVaultInfo::try_from(&value) {
+                    debug!("tx_vault: {:?}", tx_vault);
+                };
+            }
         }
     }
     fn index_transaction(
@@ -338,6 +350,8 @@ impl VaultIndexer {
             Ok(vault_tx) => {
                 let mut vault_info = TxVaultInfo::from(vault_tx);
                 vault_info.timestamp = block_timestamp;
+                vault_info.confirmed_height = confirmed_height;
+                vault_info.tx_position = tx_position;
                 let vault_key = TxVaultKey::new(
                     confirmed_height,
                     tx_position,
