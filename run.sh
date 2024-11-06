@@ -12,8 +12,8 @@ testnet3() {
     $DIR/start testnet
 }
 testnet4() {
-    export DAEMON_RPC_ADDR="127.0.0.1:48332"
-    # export DAEMON_RPC_ADDR="192.168.1.254:48332"
+    # export DAEMON_RPC_ADDR="127.0.0.1:48332"
+    export DAEMON_RPC_ADDR="192.168.1.254:48332"
     export DAEMON_CONF_PATH=$DIR/testnet4.env
     export ELECTRUM_RPC_ADDR="0.0.0.0:60001"
     export DB_FOLDER=./electrs

@@ -30,7 +30,7 @@ use crate::config::{Config, VERSION_STRING};
 use crate::electrum::{get_electrum_height, ProtocolVersion};
 use crate::errors::*;
 use crate::metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
-use crate::new_index::vault::TxVaultInfo;
+use crate::new_index::vault::TxVaultRow;
 use crate::new_index::{Query, Utxo};
 use crate::util::electrum_merkle::{get_header_merkle_proof, get_id_from_pos, get_tx_merkle_proof};
 use crate::util::{
@@ -107,7 +107,7 @@ struct Connection {
     query: Arc<Query>,
     last_header_entry: Option<HeaderEntry>,
     //Store last vault key for subscription
-    last_vault_entry: Option<TxVaultInfo>,
+    last_vault_entry: Option<TxVaultRow>,
     status_hashes: HashMap<Sha256dHash, Value>, // ScriptHash -> StatusHash
     stream: ConnectionStream,
     chan: SyncChannel<Message>,
@@ -443,16 +443,30 @@ impl Connection {
         Ok(result)
     }
     fn vault_transactions_subscribe(&mut self, params: &[Value]) -> Result<Value> {
-        let _last_vault_tx_hash: Option<String> = params.first().map(|v| v.to_string());
+        let hash = params.first().and_then(|value| value.as_str());
+        trace!(
+            "Handle vault_transactions_subscribe request with params {:?}: hash {:?}",
+            &params,
+            &hash
+        );
         //Get latest vault transaction form storage
-        let latest_vault_tx = self.vault.get_lastest_transaction()?;
-        //Add to subscriptions
-        // let hex_header = hex::encode(serialize(entry.header()));
-        let result = json!(latest_vault_tx);
+        let latest_vault_tx = self.vault.get_lastest_transaction(hash)?;
+        trace!(
+            "Handle vault_transactions_subscribe result: {:?}",
+            &latest_vault_tx
+        );
+
+        let result = Value::from(&latest_vault_tx);
+        // result
+        //     .as_object_mut()
+        //     .unwrap()
+        //     .insert("key".to_string(), latest_vault_tx.key.as_hex().into());
+
         self.last_vault_entry = Some(latest_vault_tx);
         Ok(result)
     }
     fn handle_command(&mut self, method: &str, params: &[Value], id: &Value) -> Result<Value> {
+        trace!("Handle command {:?} with params {:?}", &method, &params);
         let timer = self
             .stats
             .latency
@@ -526,28 +540,23 @@ impl Connection {
             }
         }
         //Scalar: Add vault subscription
-        if let Ok(vault_tx) = self.vault.get_lastest_transaction() {
+        let last_key = self.last_vault_entry.as_ref().map(|row| row.key.as_hex());
+        let last_key_str = last_key.as_ref().map(|v| v.as_str());
+        if let Ok(vault_tx) = self.vault.get_lastest_transaction(last_key_str) {
             debug!(
-                "Latest vault tx at {:?}:{:?} {:?}",
-                &vault_tx.confirmed_height, &vault_tx.tx_position, &vault_tx.txid
+                "Latest vault tx at {:?}:{:?} {:?} with key {:?}",
+                &vault_tx.key.height,
+                &vault_tx.key.position,
+                &vault_tx.info.txid,
+                &vault_tx.key.as_hex()
             );
-            let mut new_tx = false;
-            if let Some(ref mut last_vault_tx) = self.last_vault_entry {
-                if last_vault_tx.txid != vault_tx.txid {
-                    *last_vault_tx = vault_tx;
-                    new_tx = true;
-                }
-            } else {
-                self.last_vault_entry = Some(vault_tx);
-                new_tx = true;
-            }
-            if new_tx {
-                debug!("Add request for latest vaultx");
-                result.push(json!({
+            let last_vault_tx = Value::from(&vault_tx);
+            debug!("Emitted from server last_vault_tx: {:?}", &last_vault_tx);
+            self.last_vault_entry = Some(vault_tx);
+            result.push(json!({
                         "jsonrpc": "2.0",
                         "method": "vault.transactions.subscribe",
-                        "params": []}));
-            }
+                        "params": [last_vault_tx]}));
         } else {
             debug!("Latest vault transaction not found");
         };
@@ -587,7 +596,7 @@ impl Connection {
                     match msg {
                         Message::Request(line) => {
                             let result = self.handle_line(&line);
-                            trace!("Handle Request {:?} with result {:?}", &line, &result);
+                            // trace!("Handle Request {:?} with result {:?}", &line, &result);
                             self.send_values(&[result])?
                         }
                         Message::PeriodicUpdate => {
@@ -674,13 +683,10 @@ impl Connection {
                     bail!("invalid request - maybe SSL-encrypted data?: {:?}", line)
                 }
                 match String::from_utf8(line) {
-                    Ok(req) => {
-                        trace!("Handle Request {:?} ", &req);
-                        tx.send(Message::Request(req))
-                            .chain_err(|| "channel closed")?
-                    }
+                    Ok(req) => tx
+                        .send(Message::Request(req))
+                        .chain_err(|| "channel closed")?,
                     Err(err) => {
-                        trace!("Handle Request failed {:?}", &err);
                         let _ = tx.send(Message::Done);
                         bail!("invalid UTF8: {}", err)
                     }
