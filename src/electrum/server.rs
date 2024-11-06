@@ -30,7 +30,7 @@ use crate::config::{Config, VERSION_STRING};
 use crate::electrum::{get_electrum_height, ProtocolVersion};
 use crate::errors::*;
 use crate::metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
-use crate::new_index::vault::TxVaultInfo;
+use crate::new_index::vault::TxVaultRow;
 use crate::new_index::{Query, Utxo};
 use crate::util::electrum_merkle::{get_header_merkle_proof, get_id_from_pos, get_tx_merkle_proof};
 use crate::util::{
@@ -107,7 +107,7 @@ struct Connection {
     query: Arc<Query>,
     last_header_entry: Option<HeaderEntry>,
     //Store last vault key for subscription
-    last_vault_entry: Option<TxVaultInfo>,
+    last_vault_entry: Option<TxVaultRow>,
     status_hashes: HashMap<Sha256dHash, Value>, // ScriptHash -> StatusHash
     stream: ConnectionStream,
     chan: SyncChannel<Message>,
@@ -427,27 +427,46 @@ impl Connection {
             "merkle" : merkle}))
     }
     fn vault_transactions_get(&mut self, params: &[Value]) -> Result<Value> {
-        let hash = hash_from_value(params.first())?;
+        let hash = params
+            .first()
+            .and_then(|value| value.as_str())
+            .map(|v| hex::decode(v))
+            .transpose()
+            .map_err(|e| Error::from(e.to_string()))?;
         let length = usize_from_value(params.get(1), "length")?;
         //Get latest vault transaction form storage
-        let transactions = self.vault.get_transactions(&hash, length)?;
+        let transactions = self.vault.get_transactions_from_hash(hash, length)?;
         //Add to subscriptions
         // let hex_header = hex::encode(serialize(entry.header()));
         // self.last_header_entry = Some(entry);
         let result = json!(transactions);
         Ok(result)
     }
-    fn vault_transactions_subscribe(&mut self, _params: &[Value]) -> Result<Value> {
-        // let _height = usize_from_value(params.first(), "hash")?;
+    fn vault_transactions_subscribe(&mut self, params: &[Value]) -> Result<Value> {
+        let hash = params.first().and_then(|value| value.as_str());
+        trace!(
+            "Handle vault_transactions_subscribe request with params {:?}: hash {:?}",
+            &params,
+            &hash
+        );
         //Get latest vault transaction form storage
-        let latest_vault_tx = self.vault.get_lastest_transaction()?;
-        //Add to subscriptions
-        // let hex_header = hex::encode(serialize(entry.header()));
-        let result = json!(latest_vault_tx);
+        let latest_vault_tx = self.vault.get_lastest_transaction(hash)?;
+        trace!(
+            "Handle vault_transactions_subscribe result: {:?}",
+            &latest_vault_tx
+        );
+
+        let result = Value::from(&latest_vault_tx);
+        // result
+        //     .as_object_mut()
+        //     .unwrap()
+        //     .insert("key".to_string(), latest_vault_tx.key.as_hex().into());
+
         self.last_vault_entry = Some(latest_vault_tx);
         Ok(result)
     }
     fn handle_command(&mut self, method: &str, params: &[Value], id: &Value) -> Result<Value> {
+        trace!("Handle command {:?} with params {:?}", &method, &params);
         let timer = self
             .stats
             .latency
@@ -521,16 +540,26 @@ impl Connection {
             }
         }
         //Scalar: Add vault subscription
-        if let Some(ref mut last_vault_tx) = self.last_vault_entry {
-            let vault_tx = self.vault.get_lastest_transaction()?;
-            if last_vault_tx.txid != vault_tx.txid {
-                *last_vault_tx = vault_tx;
-                result.push(json!({
-                    "jsonrpc": "2.0",
-                    "method": "vault.transactions.subscribe",
-                    "params": []}));
-            }
-        }
+        let last_key = self.last_vault_entry.as_ref().map(|row| row.key.as_hex());
+        let last_key_str = last_key.as_ref().map(|v| v.as_str());
+        if let Ok(vault_tx) = self.vault.get_lastest_transaction(last_key_str) {
+            debug!(
+                "Latest vault tx at {:?}:{:?} {:?} with key {:?}",
+                &vault_tx.key.height,
+                &vault_tx.key.position,
+                &vault_tx.info.txid,
+                &vault_tx.key.as_hex()
+            );
+            let last_vault_tx = Value::from(&vault_tx);
+            debug!("Emitted from server last_vault_tx: {:?}", &last_vault_tx);
+            self.last_vault_entry = Some(vault_tx);
+            result.push(json!({
+                        "jsonrpc": "2.0",
+                        "method": "vault.transactions.subscribe",
+                        "params": [last_vault_tx]}));
+        } else {
+            debug!("Latest vault transaction not found");
+        };
         for (script_hash, status_hash) in self.status_hashes.iter_mut() {
             let history_txids = get_history(&self.query, &script_hash[..], self.txs_limit)?;
             let new_status_hash = get_status_hash(history_txids, &self.query)
@@ -567,12 +596,16 @@ impl Connection {
                     match msg {
                         Message::Request(line) => {
                             let result = self.handle_line(&line);
+                            // trace!("Handle Request {:?} with result {:?}", &line, &result);
                             self.send_values(&[result])?
                         }
                         Message::PeriodicUpdate => {
                             let values = self
                                 .update_subscriptions()
                                 .chain_err(|| "failed to update subscriptions")?;
+                            if !values.is_empty() {
+                                trace!("Handle PeriodicUpdate with values {:?}", &values);
+                            }
                             self.send_values(&values)?
                         }
                         Message::Done => {

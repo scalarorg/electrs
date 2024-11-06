@@ -76,7 +76,7 @@ fn bitcoind_fetcher(
     Ok(Fetcher::from(
         chan.into_receiver(),
         spawn_thread("bitcoind_fetcher", move || {
-            for entries in new_headers.chunks(100) {
+            for entries in new_headers.chunks(10) {
                 let blockhashes: Vec<BlockHash> = entries.iter().map(|e| *e.hash()).collect();
                 let blocks = daemon
                     .getblocks(&blockhashes)

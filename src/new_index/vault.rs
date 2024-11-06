@@ -6,12 +6,14 @@ use super::{BlockEntry, DBRow, Store, DB};
 use crate::chain::{Network, Transaction};
 
 use crate::config::Config;
-use crate::util::{bincode_util, full_hash, Bytes, FullHash};
+use crate::util::{bincode_util, full_hash, Bytes};
 use bitcoin::consensus::Encodable;
+use bitcoin::hashes::Hash;
 use bitcoin::Txid;
 use bitcoin_vault::types::{VaultChangeTxOutput, VaultTransaction};
 use bitcoin_vault::{DestinationAddress, DestinationChainId, ParsingStaking, StakingParser};
 use rayon::prelude::*;
+use serde_json::Value;
 
 #[cfg(feature = "liquid")]
 use crate::elements::{asset, peg};
@@ -24,6 +26,8 @@ use elements::{
 };
 
 use crate::errors::*;
+
+const HASH_LEN: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxVaultInfo {
@@ -53,22 +57,55 @@ impl TxVaultInfo {
     }
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxVaultKey {
-    code: u8,
-    txid: FullHash,
+    pub height: u32,
+    pub position: u32,
+    pub txid: Txid,
 }
 impl TxVaultKey {
-    pub fn new(txid: FullHash) -> Self {
-        Self { code: b'V', txid }
-    }
-    pub fn as_bytes(&self) -> Vec<u8> {
-        bincode_util::serialize_big(&self).unwrap()
+    pub fn new(height: u32, position: u32, txid: Txid) -> Self {
+        Self {
+            height,
+            position,
+            //txid: full_hash(&txid[..]),
+            txid,
+        }
     }
 
-    pub fn try_from(bytes: &[u8]) -> Result<Self> {
-        bincode_util::deserialize_big(bytes)
-            .map_err(|e| Error::from(format!("Invalid value: {}", e)))
+    pub fn as_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(HASH_LEN + 8);
+        for b in self.height.to_be_bytes() {
+            bytes.push(b);
+        }
+        for b in self.position.to_be_bytes() {
+            bytes.push(b);
+        }
+        for b in self.txid.as_raw_hash().as_byte_array() {
+            bytes.push(*b);
+        }
+        bytes
+    }
+    pub fn as_hex(&self) -> String {
+        hex::encode(self.as_bytes())
+    }
+    pub fn try_from_hex(hex: &str) -> Result<Self> {
+        let bytes = hex::decode(hex).map_err(|e| Error::from(e.to_string()))?;
+        Self::try_from_bytes(bytes.as_slice())
+    }
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < HASH_LEN + 8 {
+            return Err(Error::from("Invalid length"));
+        }
+        let height = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
+        let position = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
+        let txid = Txid::from_slice(&bytes[8..]).map_err(|e| Error::from(e.to_string()))?;
+        //let txid = full_hash(&bytes[8..]);
+        Ok(Self {
+            height,
+            position,
+            txid,
+        })
     }
 }
 
@@ -109,8 +146,8 @@ impl TxVaultRow {
     }
 
     pub fn from_row(row: DBRow) -> Self {
-        let key =
-            bincode_util::deserialize_big(&row.key).expect("failed to deserialize TxVaultKey");
+        let key = TxVaultKey::try_from_bytes(row.key.as_slice())
+            .expect("failed to deserialize TxVaultKey");
         let info =
             bincode_util::deserialize_big(&row.value).expect("failed to deserialize TxVaultInfo");
         TxVaultRow { key, info }
@@ -120,28 +157,38 @@ impl TxVaultRow {
     //     Txid::from_str(&self.key.txid.as_str()).chain_err(|| "Invalid txid")
     // }
 }
-impl From<VaultTransaction> for TxVaultRow {
+impl From<&TxVaultRow> for Value {
+    fn from(value: &TxVaultRow) -> Self {
+        let mut result = json!(&value.info);
+        result
+            .as_object_mut()
+            .unwrap()
+            .insert("key".to_string(), value.key.as_hex().into());
+        result
+    }
+}
+impl From<VaultTransaction> for TxVaultInfo {
     fn from(vault_tx: VaultTransaction) -> Self {
         let VaultTransaction {
             txid,
             staker_address,
             staker_pubkey,
             tx_content,
-            inputs,
+            inputs: _inputs,
             lock_tx,
             return_tx,
             change_tx,
         } = vault_tx;
         let mut writer = vec![];
         txid.consensus_encode(&mut writer).unwrap();
-        let key = TxVaultKey::new(full_hash(&txid[..]));
+        //let key = TxVaultKey::new(full_hash(&txid[..]));
         let (change_amount, change_address) =
             if let Some(VaultChangeTxOutput { amount, address }) = change_tx {
                 (Some(amount.to_sat()), Some(address))
             } else {
                 (None, None)
             };
-        let info = TxVaultInfo {
+        TxVaultInfo {
             confirmed_height: 0,
             txid,
             tx_position: 0,
@@ -155,8 +202,7 @@ impl From<VaultTransaction> for TxVaultRow {
             destination_chain_id: return_tx.destination_chain_id,
             destination_contract_address: return_tx.destination_contract_address,
             destination_recipient_address: return_tx.destination_recipient_address,
-        };
-        TxVaultRow { key, info }
+        }
     }
 }
 pub struct VaultStore {
@@ -186,60 +232,79 @@ impl VaultStore {
             .chain_err(|| "TxVault not found")?;
         TxVaultInfo::try_from(&value).chain_err(|| "Invalid value")
     }
-    pub fn get_lastest_transaction(&self) -> Result<TxVaultInfo> {
-        let mut header_it = self.vault_txs.raw_iterator();
-        header_it.seek_to_last();
-        if header_it.valid() {
-            // Get the last header value and deserialize it to get the tx positions
-            let value = header_it.value().expect("Failed to get header value");
-            TxVaultInfo::try_from(value)
-            // let tx_positions: Vec<u16> =
-            //     bincode_util::deserialize_big(&value).expect("Failed to deserialize tx positions");
+    pub fn get_lastest_transaction(&self, last_vault_tx_hash: Option<&str>) -> Result<TxVaultRow> {
+        let last_key = last_vault_tx_hash
+            .map(|v| TxVaultKey::try_from_hex(v))
+            .transpose()?;
+        match last_key {
+            Some(key) => {
+                debug!("Get latest vault tx from key: {:?}", &key);
+                let mut iter = self
+                    .vault_txs()
+                    .forward_iterator_from(key.as_bytes().as_slice());
+                iter.next(); //Skip the input last_key
+                match iter.next() {
+                    Some(Ok((k, v))) => {
+                        let info = TxVaultInfo::try_from(&v)?;
+                        let key = TxVaultKey::try_from_bytes(&k[0..])?;
+                        Ok(TxVaultRow { key, info })
+                    }
+                    _ => Err(Error::from("No newer transaction found")),
+                }
+            }
 
-            // if let Some(last_pos) = tx_positions.last() {
-            //     // Get the last tx using height and position
-            //     let height = header_it.key().expect("Failed to get header key");
-            //     let height = u32::from_be_bytes(height.try_into().expect("Invalid height bytes"));
-
-            //     // Construct key to look up the transaction
-            //     let key = TxVaultKey::new(height, *last_pos);
-            //     let info = self
-            //         .vault_txs
-            //         .get(key.as_bytes().as_slice())
-            //         .and_then(|value| TxVaultInfo::try_from(&value).ok());
-            //     return info.ok_or(Error::from("No vault transactions found"));
-            // }
-        } else {
-            Err(Error::from("No vault transactions found"))
+            None => {
+                let mut iter = self.vault_txs().raw_iterator();
+                iter.seek_to_first();
+                match (iter.key(), iter.value()) {
+                    (Some(key), Some(value)) => {
+                        let key = TxVaultKey::try_from_bytes(&key[0..])?;
+                        let info = TxVaultInfo::try_from(&value)?;
+                        Ok(TxVaultRow { key, info })
+                    }
+                    _ => Err(Error::from("No newer transaction found")),
+                }
+            }
         }
     }
 
-    pub fn get_transaction(&self, hash: &[u8; 32]) -> Result<TxVaultInfo> {
-        let key = TxVaultKey::new(hash.clone());
-        let Some(value) = self.vault_txs.get(key.as_bytes().as_slice()) else {
-            return Err(Error::from("TxVault not found"));
-        };
-        let tx_vault = TxVaultInfo::try_from(&value)?;
-
-        Ok(tx_vault)
-    }
     pub fn get_transactions_from_hash(
         &self,
-        hash: &[u8; 32],
+        hash: Option<Vec<u8>>, //hex string
         length: usize,
     ) -> Result<Vec<TxVaultInfo>> {
         let mut tx_vaults = Vec::new();
-        let key = TxVaultKey::new(hash.clone());
-        let mut iter = self
-            .vault_txs()
-            .forward_iterator_from(key.as_bytes().as_slice());
-        while tx_vaults.len() < length {
-            let Some(Ok((_, value))) = iter.next() else {
-                break;
-            };
-            let tx_vault = TxVaultInfo::try_from(&value)?;
-            tx_vaults.push(tx_vault);
-        }
+        let key = hash
+            .map(|v| TxVaultKey::try_from_bytes(v.as_slice()))
+            .transpose()?;
+        match key {
+            Some(key) => {
+                let mut iter = self
+                    .vault_txs()
+                    .forward_iterator_from(key.as_bytes().as_slice());
+                while tx_vaults.len() < length {
+                    let Some(Ok((_, value))) = iter.next() else {
+                        break;
+                    };
+                    let tx_vault = TxVaultInfo::try_from(&value)?;
+                    tx_vaults.push(tx_vault);
+                }
+            }
+
+            None => {
+                let mut iter = self.vault_txs().raw_iterator();
+                iter.seek_to_first();
+                while tx_vaults.len() < length && iter.valid() {
+                    let Some(value) = iter.value() else {
+                        break;
+                    };
+                    let tx_vault = TxVaultInfo::try_from(&value)?;
+                    tx_vaults.push(tx_vault);
+                    iter.next();
+                }
+            }
+        };
+
         Ok(tx_vaults)
     }
 }
@@ -264,7 +329,7 @@ impl VaultIndexer {
     }
 
     pub fn index_blocks(&self, block_entries: &[BlockEntry]) {
-        let vault_rows: Vec<DBRow> = block_entries
+        let vault_rows: Vec<TxVaultRow> = block_entries
             .par_iter() // serialization is CPU-intensive
             .map(|b| {
                 let mut rows = vec![];
@@ -277,8 +342,25 @@ impl VaultIndexer {
             })
             .flatten()
             .collect();
+
         if !vault_rows.is_empty() {
-            self.store.vault_store().flush_vault_tx(vault_rows);
+            //Reorder the rows by height and tx_position
+            //vault_rows.par_sort_by_key(|row| (row.info.confirmed_height, row.info.tx_position));
+            let dbrows = vault_rows.into_iter().map(|tx| tx.into_row()).collect();
+            let vault_store = self.store.vault_store();
+            vault_store.flush_vault_tx(dbrows);
+            // Check insert order
+            // let mut iter = vault_store.vault_txs().raw_iterator();
+            // iter.seek_to_first();
+            // while iter.valid() {
+            //     let Some(value) = iter.value() else {
+            //         break;
+            //     };
+            //     if let Ok(tx_vault) = TxVaultInfo::try_from(&value) {
+            //         debug!("tx_vault: {:?}", tx_vault);
+            //     };
+            //     iter.next();
+            // }
         }
     }
     fn index_transaction(
@@ -287,20 +369,29 @@ impl VaultIndexer {
         confirmed_height: u32,
         tx_position: u32,
         block_timestamp: u32,
-        rows: &mut Vec<DBRow>,
+        rows: &mut Vec<TxVaultRow>,
     ) {
         match self.staking_parser.parse(tx) {
             Ok(vault_tx) => {
-                let mut vault_row = TxVaultRow::from(vault_tx);
-                vault_row.info.confirmed_height = confirmed_height;
-                vault_row.info.tx_position = tx_position;
-                vault_row.info.timestamp = block_timestamp;
+                let mut vault_info = TxVaultInfo::from(vault_tx);
+                vault_info.timestamp = block_timestamp;
+                vault_info.confirmed_height = confirmed_height;
+                vault_info.tx_position = tx_position;
+                let vault_key = TxVaultKey::new(
+                    confirmed_height,
+                    tx_position,
+                    vault_info.txid,
+                    //full_hash(&vault_info.txid[..]),
+                );
+                let vault_row = TxVaultRow {
+                    key: vault_key,
+                    info: vault_info,
+                };
                 debug!(
                     "Parsed staking transaction: {:?} in block {}",
                     vault_row.info, confirmed_height
                 );
-
-                rows.push(vault_row.into_row());
+                rows.push(vault_row);
             }
             Err(_e) => {
                 // Not a staking transaction
@@ -312,7 +403,7 @@ impl VaultIndexer {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, str::FromStr};
 
     use bitcoin::consensus::Decodable;
     use bitcoin_vault::types::error::ParserError;
@@ -324,6 +415,19 @@ mod tests {
     struct TestData<'a> {
         tx_hex: &'a str,
         amount: u64,
+    }
+    #[test]
+    fn test_vault_key() {
+        let txid_str = "2e262c1986f7ca376842ec976283f22f28ebfda19db223b569f87bed1ea927dd";
+        let txid = Txid::from_str(txid_str).unwrap();
+        println!("txid: {:?}", txid);
+        let hash =
+            "0000d1d900000005dd27a91eed7bf869b523b29da1fdeb282ff2836297ec426837caf786192c262e";
+        let expected_key = TxVaultKey::new(53721, 5, txid);
+        let parsed_key = TxVaultKey::try_from_hex(hash).unwrap();
+        println!("Parsed key: {:?}", parsed_key);
+        println!("Expected key: {:?}", expected_key);
+        assert_eq!(parsed_key.as_hex(), hash);
     }
     #[test]
     fn test_vault_indexer_testnet4() {
@@ -351,7 +455,7 @@ mod tests {
             let mut rows = vec![];
             vault_indexer.index_transaction(&tx, 1, 0, 0, &mut rows);
             assert_eq!(rows.len(), 1);
-            let vault_row = TxVaultRow::from_row(rows.pop().unwrap());
+            let vault_row = rows.pop().unwrap();
             assert_eq!(vault_row.info.amount, test_data.amount);
             println!("vault_row: {:?}", vault_row);
         } else {
