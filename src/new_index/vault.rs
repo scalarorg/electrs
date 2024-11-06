@@ -2,14 +2,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::db::DBFlush;
+use super::schema::lookup_txo;
 use super::{BlockEntry, DBRow, Store, DB};
 use crate::chain::{Network, Transaction};
 
 use crate::config::Config;
-use crate::util::{bincode_util, full_hash, Bytes};
+use crate::util::{bincode_util, full_hash, Bytes, ScriptToAddr};
 use bitcoin::consensus::Encodable;
 use bitcoin::hashes::Hash;
-use bitcoin::Txid;
+use bitcoin::{OutPoint, TxOut, Txid};
 use bitcoin_vault::types::{VaultChangeTxOutput, VaultTransaction};
 use bitcoin_vault::{DestinationAddress, DestinationChainId, ParsingStaking, StakingParser};
 use rayon::prelude::*;
@@ -186,15 +187,14 @@ impl From<VaultTransaction> for TxVaultInfo {
             } else {
                 (None, None)
             };
-        let staker_address = None;
-        let staker_pubkey = inputs.first().and_then(|input| input.get_pubkey());
+
         TxVaultInfo {
             confirmed_height: 0,
             txid,
             tx_position: 0,
             amount: lock_tx.amount.to_sat(),
-            staker_address,
-            staker_pubkey,
+            staker_address: None,
+            staker_pubkey: None,
             tx_content,
             timestamp: 0,
             change_amount,
@@ -371,12 +371,22 @@ impl VaultIndexer {
         block_timestamp: u32,
         rows: &mut Vec<TxVaultRow>,
     ) {
+        //Todo: Set staker address and pubkey by first txin
         match self.staking_parser.parse(tx) {
             Ok(vault_tx) => {
+                let first_txout = vault_tx
+                    .inputs
+                    .first()
+                    .and_then(|input| self.lookup_txo(&input.previous_output));
+                let script_pubkey = first_txout.as_ref().map(|txout| &txout.script_pubkey);
+
                 let mut vault_info = TxVaultInfo::from(vault_tx);
                 vault_info.timestamp = block_timestamp;
                 vault_info.confirmed_height = confirmed_height;
                 vault_info.tx_position = tx_position;
+                vault_info.staker_pubkey = script_pubkey.map(|script| script.to_hex_string());
+                vault_info.staker_address =
+                    script_pubkey.and_then(|sb| sb.to_address_str(self.network));
                 let vault_key = TxVaultKey::new(
                     confirmed_height,
                     tx_position,
@@ -398,6 +408,9 @@ impl VaultIndexer {
                 //warn!("Failed to parse staking transaction: {}", e);
             }
         }
+    }
+    fn lookup_txo(&self, outpoint: &OutPoint) -> Option<TxOut> {
+        lookup_txo(self.store.txstore_db(), outpoint)
     }
 }
 
