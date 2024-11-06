@@ -171,10 +171,8 @@ impl From<VaultTransaction> for TxVaultInfo {
     fn from(vault_tx: VaultTransaction) -> Self {
         let VaultTransaction {
             txid,
-            staker_address,
-            staker_pubkey,
             tx_content,
-            inputs: _inputs,
+            inputs,
             lock_tx,
             return_tx,
             change_tx,
@@ -188,6 +186,8 @@ impl From<VaultTransaction> for TxVaultInfo {
             } else {
                 (None, None)
             };
+        let staker_address = None;
+        let staker_pubkey = inputs.first().and_then(|input| input.get_pubkey());
         TxVaultInfo {
             confirmed_height: 0,
             txid,
