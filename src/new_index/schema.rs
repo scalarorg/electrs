@@ -1407,7 +1407,7 @@ fn lookup_txos(
     })
 }
 
-fn lookup_txo(txstore_db: &DB, outpoint: &OutPoint) -> Option<TxOut> {
+pub(super) fn lookup_txo(txstore_db: &DB, outpoint: &OutPoint) -> Option<TxOut> {
     txstore_db
         .get(&TxOutRow::key(outpoint))
         .map(|val| deserialize(&val).expect("failed to parse TxOut"))
