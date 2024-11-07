@@ -398,8 +398,10 @@ impl VaultIndexer {
                     info: vault_info,
                 };
                 debug!(
-                    "Parsed staking transaction: {:?} in block {}",
-                    vault_row.info, confirmed_height
+                    "Parsed block {:?}. Found staking transaction with key {:?}, value {:?}",
+                    confirmed_height,
+                    vault_row.key.as_hex(),
+                    vault_row.info,
                 );
                 rows.push(vault_row);
             }
