@@ -253,12 +253,11 @@ impl VaultStore {
                 iter.next();
                 while (tx_vaults.len() < batch_size) && iter.valid() {
                     if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
-                        if key.len() < HASH_LEN + 8 {
-                            continue;
+                        if key.len() >= HASH_LEN + 8 {
+                            let key = TxVaultKey::try_from_bytes(&key[0..])?;
+                            let info = TxVaultInfo::try_from(&value)?;
+                            tx_vaults.push(TxVaultRow { key, info });
                         }
-                        let key = TxVaultKey::try_from_bytes(&key[0..])?;
-                        let info = TxVaultInfo::try_from(&value)?;
-                        tx_vaults.push(TxVaultRow { key, info });
                     }
                     iter.next();
                 }
