@@ -572,7 +572,7 @@ impl Connection {
             result.push(json!({
                         "jsonrpc": "2.0",
                         "method": "vault.transactions.subscribe",
-                        "params": [vault_txs_result]}));
+                        "params": vault_txs_result}));
         } else {
             debug!("Latest vault transaction not found");
         }
