@@ -242,7 +242,6 @@ impl VaultStore {
                 let mut iter = self
                     .vault_txs()
                     .forward_iterator_from(key.as_bytes().as_slice());
-                iter.next(); //Skip the input last_key
                 match iter.next() {
                     Some(Ok((k, v))) => {
                         let info = TxVaultInfo::try_from(&v)?;
