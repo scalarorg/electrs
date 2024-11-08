@@ -108,6 +108,7 @@ struct Connection {
     last_header_entry: Option<HeaderEntry>,
     //Store last vault key for subscription
     last_vault_entry: Option<TxVaultRow>,
+    last_vault_batch_size: usize,
     status_hashes: HashMap<Sha256dHash, Value>, // ScriptHash -> StatusHash
     stream: ConnectionStream,
     chan: SyncChannel<Message>,
@@ -134,6 +135,7 @@ impl Connection {
             query,
             last_header_entry: None, // disable header subscription for now
             last_vault_entry: None,  // disable vault subscription for now
+            last_vault_batch_size: 1,
             status_hashes: HashMap::new(),
             stream,
             chan: SyncChannel::new(10),
@@ -443,26 +445,34 @@ impl Connection {
         Ok(result)
     }
     fn vault_transactions_subscribe(&mut self, params: &[Value]) -> Result<Value> {
-        let hash = params.first().and_then(|value| value.as_str());
+        //Batch size
+        self.last_vault_batch_size =
+            params.first().and_then(|value| value.as_u64()).unwrap_or(1) as usize;
+        let hash = params.get(1).and_then(|value| value.as_str());
         trace!(
             "Handle vault_transactions_subscribe request with params {:?}: hash {:?}",
             &params,
             &hash
         );
+
         //Get latest vault transaction form storage
-        let latest_vault_tx = self.vault.get_lastest_transaction(hash)?;
+        let latest_vault_txs = self
+            .vault
+            .get_lastest_transactions(self.last_vault_batch_size, hash)?;
         trace!(
             "Handle vault_transactions_subscribe result: {:?}",
-            &latest_vault_tx
+            &latest_vault_txs
         );
-
-        let result = Value::from(&latest_vault_tx);
+        if latest_vault_txs.is_empty() {
+            return Err(Error::from("No newer transaction found"));
+        }
+        let result = Value::Array(latest_vault_txs.iter().map(|v| Value::from(v)).collect());
         // result
         //     .as_object_mut()
         //     .unwrap()
         //     .insert("key".to_string(), latest_vault_tx.key.as_hex().into());
 
-        self.last_vault_entry = Some(latest_vault_tx);
+        self.last_vault_entry = latest_vault_txs.into_iter().last();
         Ok(result)
     }
     fn handle_command(&mut self, method: &str, params: &[Value], id: &Value) -> Result<Value> {
@@ -542,24 +552,31 @@ impl Connection {
         //Scalar: Add vault subscription
         let last_key = self.last_vault_entry.as_ref().map(|row| row.key.as_hex());
         let last_key_str = last_key.as_ref().map(|v| v.as_str());
-        if let Ok(vault_tx) = self.vault.get_lastest_transaction(last_key_str) {
+        let vault_txs = self
+            .vault
+            .get_lastest_transactions(self.last_vault_batch_size, last_key_str)
+            .unwrap_or_default();
+        if !vault_txs.is_empty() {
+            let vault_txs_len = vault_txs.len();
+            let vault_txs_result = Value::Array(vault_txs.iter().map(|v| Value::from(v)).collect());
+            self.last_vault_entry = vault_txs.into_iter().last();
+            let vault_tx = self.last_vault_entry.as_ref().unwrap();
             debug!(
-                "Latest vault tx at {:?}:{:?} {:?} with key {:?}",
+                "Found {} vault txs. Latest vault tx at {:?}:{:?} {:?} with key {:?}",
+                vault_txs_len,
                 &vault_tx.key.height,
                 &vault_tx.key.position,
                 &vault_tx.info.txid,
                 &vault_tx.key.as_hex()
             );
-            let last_vault_tx = Value::from(&vault_tx);
-            debug!("Emitted from server last_vault_tx: {:?}", &last_vault_tx);
-            self.last_vault_entry = Some(vault_tx);
             result.push(json!({
                         "jsonrpc": "2.0",
                         "method": "vault.transactions.subscribe",
-                        "params": [last_vault_tx]}));
+                        "params": [vault_txs_result]}));
         } else {
             debug!("Latest vault transaction not found");
-        };
+        }
+
         for (script_hash, status_hash) in self.status_hashes.iter_mut() {
             let history_txids = get_history(&self.query, &script_hash[..], self.txs_limit)?;
             let new_status_hash = get_status_hash(history_txids, &self.query)

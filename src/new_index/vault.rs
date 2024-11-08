@@ -96,6 +96,7 @@ impl TxVaultKey {
     }
     pub fn try_from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < HASH_LEN + 8 {
+            error!("Invalid length: {:?}", bytes.len());
             return Err(Error::from("Invalid length"));
         }
         let height = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
@@ -232,39 +233,51 @@ impl VaultStore {
             .chain_err(|| "TxVault not found")?;
         TxVaultInfo::try_from(&value).chain_err(|| "Invalid value")
     }
-    pub fn get_lastest_transaction(&self, last_vault_tx_hash: Option<&str>) -> Result<TxVaultRow> {
+    pub fn get_lastest_transactions(
+        &self,
+        batch_size: usize,
+        last_vault_tx_hash: Option<&str>,
+    ) -> Result<Vec<TxVaultRow>> {
         let last_key = last_vault_tx_hash
             .map(|v| TxVaultKey::try_from_hex(v))
             .transpose()?;
+        let mut tx_vaults = Vec::new();
         match last_key {
             Some(key) => {
                 debug!("Get latest vault tx from key: {:?}", &key);
-                let mut iter = self
-                    .vault_txs()
-                    .forward_iterator_from(key.as_bytes().as_slice());
-                match iter.next() {
-                    Some(Ok((k, v))) => {
-                        let info = TxVaultInfo::try_from(&v)?;
-                        let key = TxVaultKey::try_from_bytes(&k[0..])?;
-                        Ok(TxVaultRow { key, info })
+                // let mut iter = self
+                //     .vault_txs()
+                //     .forward_iterator_from(key.as_bytes().as_slice());
+                let mut iter = self.vault_txs().raw_iterator();
+                iter.seek(key.as_bytes());
+                iter.next();
+                while (tx_vaults.len() < batch_size) && iter.valid() {
+                    if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
+                        if key.len() < HASH_LEN + 8 {
+                            continue;
+                        }
+                        let key = TxVaultKey::try_from_bytes(&key[0..])?;
+                        let info = TxVaultInfo::try_from(&value)?;
+                        tx_vaults.push(TxVaultRow { key, info });
                     }
-                    _ => Err(Error::from("No newer transaction found")),
+                    iter.next();
                 }
             }
 
             None => {
                 let mut iter = self.vault_txs().raw_iterator();
                 iter.seek_to_first();
-                match (iter.key(), iter.value()) {
-                    (Some(key), Some(value)) => {
+                while tx_vaults.len() < batch_size && iter.valid() {
+                    if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
                         let key = TxVaultKey::try_from_bytes(&key[0..])?;
                         let info = TxVaultInfo::try_from(&value)?;
-                        Ok(TxVaultRow { key, info })
+                        tx_vaults.push(TxVaultRow { key, info })
                     }
-                    _ => Err(Error::from("No newer transaction found")),
+                    iter.next();
                 }
             }
         }
+        Ok(tx_vaults)
     }
 
     pub fn get_transactions_from_hash(

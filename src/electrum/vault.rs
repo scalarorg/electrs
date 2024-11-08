@@ -21,12 +21,13 @@ impl VaultServer {
         let tx_vaults = vault_store.get_transactions_from_hash(hash, length)?;
         Ok(tx_vaults)
     }
-    pub fn get_lastest_transaction(
+    pub fn get_lastest_transactions(
         &self,
+        batch_size: usize,
         // Hex String param form client
         last_vault_tx_hash: Option<&str>,
-    ) -> Result<TxVaultRow> {
+    ) -> Result<Vec<TxVaultRow>> {
         let vault_store = self.query.chain().store().vault_store();
-        vault_store.get_lastest_transaction(last_vault_tx_hash)
+        vault_store.get_lastest_transactions(batch_size, last_vault_tx_hash)
     }
 }
