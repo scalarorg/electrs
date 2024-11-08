@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::util::{bincode_util, full_hash, Bytes, ScriptToAddr};
 use bitcoin::consensus::Encodable;
 use bitcoin::hashes::Hash;
-use bitcoin::{OutPoint, TxOut, Txid};
+use bitcoin::{OutPoint, ScriptBuf, TxIn, TxOut, Txid};
 use bitcoin_vault::types::{VaultChangeTxOutput, VaultTransaction};
 use bitcoin_vault::{DestinationAddress, DestinationChainId, ParsingStaking, StakingParser};
 use rayon::prelude::*;
@@ -374,19 +374,16 @@ impl VaultIndexer {
         //Todo: Set staker address and pubkey by first txin
         match self.staking_parser.parse(tx) {
             Ok(vault_tx) => {
-                let first_txout = vault_tx
-                    .inputs
-                    .first()
-                    .and_then(|input| self.lookup_txo(&input.previous_output));
-                let script_pubkey = first_txout.as_ref().map(|txout| &txout.script_pubkey);
-
+                let first_txin = vault_tx.inputs.first();
+                let staker_pubkey = self.extract_script_pubkey(first_txin);
+                let staker_address = self.extract_staker_address(first_txin);
+                //let script_pubkey = first_txin.and_then(|input| input.get_pubkey());
                 let mut vault_info = TxVaultInfo::from(vault_tx);
                 vault_info.timestamp = block_timestamp;
                 vault_info.confirmed_height = confirmed_height;
                 vault_info.tx_position = tx_position;
-                vault_info.staker_pubkey = script_pubkey.map(|script| script.to_hex_string());
-                vault_info.staker_address =
-                    script_pubkey.and_then(|sb| sb.to_address_str(self.network));
+                vault_info.staker_pubkey = staker_pubkey;
+                vault_info.staker_address = staker_address;
                 let vault_key = TxVaultKey::new(
                     confirmed_height,
                     tx_position,
@@ -410,6 +407,18 @@ impl VaultIndexer {
                 //warn!("Failed to parse staking transaction: {}", e);
             }
         }
+    }
+    fn extract_staker_address(&self, first_txin: Option<&TxIn>) -> Option<String> {
+        let first_txout = first_txin.and_then(|input| self.lookup_txo(&input.previous_output));
+        let script_pubkey = first_txout.as_ref().map(|txout| &txout.script_pubkey);
+        script_pubkey.and_then(|sb| sb.to_address_str(self.network))
+    }
+    //Extract script pubkey from first txin
+    fn extract_script_pubkey(&self, first_txin: Option<&TxIn>) -> Option<String> {
+        let script_pubkey = first_txin
+            .and_then(|input| input.witness.iter().nth(1))
+            .map(|arr| ScriptBuf::from_bytes(arr.to_vec()));
+        script_pubkey.map(|script| script.to_hex_string())
     }
     fn lookup_txo(&self, outpoint: &OutPoint) -> Option<TxOut> {
         lookup_txo(self.store.txstore_db(), outpoint)
