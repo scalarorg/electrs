@@ -1,4 +1,4 @@
-FROM debian:latest AS base
+FROM debian:bookworm-slim AS base
 
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
