@@ -2,10 +2,10 @@ version: '3.9'
 services:
 
   mempool-electrs:
+    image: scalarorg/electrs
     build:
       context: .
       dockerfile: Dockerfile
-      image: scalarorg/electrs
     restart: on-failure
 
     ports:
@@ -19,8 +19,8 @@ services:
     command: |
       --network "${NETWORK}"
       --daemon-dir "${HOME}"
-      --db-dir "${DB_FOLDER}
-      --main-loop-delay "${MAIN_LOOP_DELAY}
+      --db-dir "${DB_FOLDER}"
+      --main-loop-delay "${MAIN_LOOP_DELAY}"
       --electrum-rpc-addr "${ELECTRUM_RPC_ADDR}"
       --cookie "${rpcuser}:${rpcpassword}"
       --cors '*'

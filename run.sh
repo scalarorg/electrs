@@ -29,11 +29,14 @@ testnet4() {
 
 regtest() {
     # export DAEMON_RPC_ADDR="127.0.0.1:48332"
+    export DAEMON_RPC_ADDR="localhost:18332"
     export DAEMON_CONF_PATH=$DIR/regtest.env
     export ELECTRUM_RPC_ADDR="127.0.0.1:60401"
+    export DB_FOLDER=./electrs
     # Index from genesis
     export START_HEIGHT=0
-    export DAEMON_RPC_ADDR="localhost:18332"
+    export VAULT_TAG="01020304"
+    export VAULT_VERSION=0
     $DIR/start.scalar regtest
 }
 $@

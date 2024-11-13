@@ -343,6 +343,7 @@ impl VaultIndexer {
         let vault_rows: Vec<TxVaultRow> = block_entries
             .par_iter() // serialization is CPU-intensive
             .map(|b| {
+                debug!("--- Indexing block {:?}", b.entry.height());
                 let mut rows = vec![];
                 for (idx, tx) in b.block.txdata.iter().enumerate() {
                     let height = b.entry.height() as u32;
@@ -385,6 +386,7 @@ impl VaultIndexer {
         //Todo: Set staker address and pubkey by first txin
         match self.staking_parser.parse(tx) {
             Ok(vault_tx) => {
+                debug!("--- vault_tx_id: {:?}", vault_tx.txid);
                 let first_txin = vault_tx.inputs.first();
                 let staker_pubkey = self.extract_script_pubkey(first_txin);
                 let staker_address = self.extract_staker_address(first_txin);
