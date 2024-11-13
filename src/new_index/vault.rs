@@ -43,9 +43,10 @@ pub struct TxVaultInfo {
     pub timestamp: u32,
     pub change_amount: Option<u64>,
     pub change_address: Option<String>,
-    pub destination_chain_id: DestinationChainId,
-    pub destination_contract_address: DestinationAddress,
-    pub destination_recipient_address: DestinationAddress,
+
+    pub destination_chain_id: u64,
+    pub destination_contract_address: String,  //Hex string
+    pub destination_recipient_address: String, //Hex string
 }
 
 impl TxVaultInfo {
@@ -200,9 +201,9 @@ impl From<VaultTransaction> for TxVaultInfo {
             timestamp: 0,
             change_amount,
             change_address,
-            destination_chain_id: return_tx.destination_chain_id,
-            destination_contract_address: return_tx.destination_contract_address,
-            destination_recipient_address: return_tx.destination_recipient_address,
+            destination_chain_id: u64::from_be_bytes(return_tx.destination_chain_id),
+            destination_contract_address: hex::encode(return_tx.destination_contract_address),
+            destination_recipient_address: hex::encode(return_tx.destination_recipient_address),
         }
     }
 }
