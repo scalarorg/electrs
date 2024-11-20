@@ -16,7 +16,6 @@ use crate::daemon::Daemon;
 use crate::errors::*;
 use crate::util::{spawn_thread, HeaderEntry, SyncChannel};
 
-const FETCH_CHUNK_SIZE: usize = 100;
 #[derive(Clone, Copy, Debug)]
 pub enum FetchFrom {
     Bitcoind,
@@ -77,7 +76,7 @@ fn bitcoind_fetcher(
     Ok(Fetcher::from(
         chan.into_receiver(),
         spawn_thread("bitcoind_fetcher", move || {
-            for entries in new_headers.chunks(FETCH_CHUNK_SIZE) {
+            for entries in new_headers.chunks(daemon.fetch_size()) {
                 let blockhashes: Vec<BlockHash> = entries.iter().map(|e| *e.hash()).collect();
                 let blocks = daemon
                     .getblocks(&blockhashes)

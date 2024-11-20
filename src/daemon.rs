@@ -287,6 +287,7 @@ pub struct Daemon {
     blocks_dir: PathBuf,
     network: Network,
     magic: Option<Magic>,
+    fetch_size: usize,
     conn: Mutex<Connection>,
     message_id: Counter, // for monotonic JSONRPC 'id'
     signal: Waiter,
@@ -305,6 +306,7 @@ impl Daemon {
         cookie_getter: Arc<dyn CookieGetter>,
         network: Network,
         magic: Option<Magic>,
+        fetch_size: usize,
         signal: Waiter,
         metrics: &Metrics,
     ) -> Result<Daemon> {
@@ -313,6 +315,7 @@ impl Daemon {
             blocks_dir,
             network,
             magic,
+            fetch_size,
             conn: Mutex::new(Connection::new(
                 daemon_rpc_addr,
                 cookie_getter,
@@ -374,6 +377,7 @@ impl Daemon {
             blocks_dir: self.blocks_dir.clone(),
             network: self.network,
             magic: self.magic,
+            fetch_size: self.fetch_size,
             conn: Mutex::new(self.conn.lock().unwrap().reconnect()?),
             message_id: Counter::new(),
             signal: self.signal.clone(),
@@ -396,7 +400,9 @@ impl Daemon {
     pub fn magic(&self) -> Magic {
         self.magic.unwrap_or_else(|| self.network.magic())
     }
-
+    pub fn fetch_size(&self) -> usize {
+        self.fetch_size
+    }
     fn call_jsonrpc(&self, method: &str, request: &Value) -> Result<Value> {
         let mut conn = self.conn.lock().unwrap();
         let timer = self.latency.with_label_values(&[method]).start_timer();

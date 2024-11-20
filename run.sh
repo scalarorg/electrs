@@ -12,8 +12,7 @@ testnet3() {
     $DIR/start testnet
 }
 testnet4() {
-    # export DAEMON_RPC_ADDR="127.0.0.1:48332"
-    export DAEMON_RPC_ADDR="192.168.1.254:48332"
+    export DAEMON_RPC_ADDR="127.0.0.1:48332"
     export DAEMON_CONF_PATH=$DIR/testnet4.env
     export ELECTRUM_RPC_ADDR="0.0.0.0:60001"
     export DB_FOLDER=./electrs
@@ -21,8 +20,8 @@ testnet4() {
     export START_HEIGHT=0
     # stop height it not working yet
     # export STOP_HEIGHT=52650
-    # Hex without 0x prefix tag
-    export VAULT_TAG="53180104"
+    export FETCH_SIZE=64
+    export VAULT_TAG="SCALAR"
     export VAULT_VERSION=0
     $DIR/start.scalar testnet4
 }

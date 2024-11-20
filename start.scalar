@@ -175,6 +175,7 @@ esac
 		--stop-height "${STOP_HEIGHT}" \
 		--vault-tag "${VAULT_TAG}" \
 		--vault-version "${VAULT_VERSION}" \
+		--fetch-size "${FETCH_SIZE}" \
 		-vvvv
 	sleep 1
 # done

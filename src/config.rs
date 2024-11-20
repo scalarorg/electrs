@@ -65,6 +65,7 @@ pub struct Config {
     pub rest_default_max_address_summary_txs: usize,
     pub rest_max_mempool_page_size: usize,
     pub rest_max_mempool_txid_page_size: usize,
+    pub fetch_size: usize,
     pub allow_missing: bool,
     pub vault_tag: Vec<u8>,
     pub vault_version: u8,
@@ -284,6 +285,13 @@ impl Config {
                     .takes_value(true)
             );
         let args = args
+            .arg(
+                Arg::with_name("fetch_size")
+                    .long("fetch-size")
+                    .help("The number of blocks to fetch from the daemon at a time")
+                    .default_value("64")
+                    .takes_value(true),
+            )
             .arg(
                 Arg::with_name("allow_missing")
                     .long("allow-missing")
@@ -603,10 +611,11 @@ impl Config {
                     .exit(),
                 },
             ),
+            fetch_size: value_t_or_exit!(m, "fetch_size", usize),
             allow_missing: m.is_present("allow_missing"),
             vault_tag: m
                 .value_of("vault_tag")
-                .and_then(|s| hex::decode(s).ok())
+                .map(|s| s.as_bytes().to_vec())
                 .unwrap_or_default(),
             vault_version: m
                 .value_of("vault_version")

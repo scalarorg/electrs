@@ -36,6 +36,7 @@ fn main() {
             config.cookie_getter(),
             config.network_type,
             config.magic,
+            config.fetch_size,
             signal,
             &metrics,
         )

@@ -12,7 +12,7 @@ use bitcoin::consensus::Encodable;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, ScriptBuf, TxIn, TxOut, Txid};
 use bitcoin_vault::types::{VaultChangeTxOutput, VaultTransaction};
-use bitcoin_vault::{DestinationAddress, DestinationChainId, ParsingStaking, StakingParser};
+use bitcoin_vault::{ParsingStaking, StakingParser};
 use rayon::prelude::*;
 use serde_json::Value;
 
@@ -43,8 +43,8 @@ pub struct TxVaultInfo {
     pub timestamp: u32,
     pub change_amount: Option<u64>,
     pub change_address: Option<String>,
-
-    pub destination_chain_id: u64,
+    // Destination chain family(1 byte) and id(7 bytes)
+    pub destination_chain: u64,
     pub destination_contract_address: String,  //Hex string
     pub destination_recipient_address: String, //Hex string
 }
@@ -53,7 +53,7 @@ impl TxVaultInfo {
     pub fn as_bytes(&self) -> Vec<u8> {
         bincode_util::serialize_big(&self).unwrap()
     }
-    pub fn try_from(bytes: &[u8]) -> Result<Self> {
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self> {
         bincode_util::deserialize_big(bytes)
             .map_err(|e| Error::from(format!("Invalid value: {}", e)))
     }
@@ -155,7 +155,11 @@ impl TxVaultRow {
             bincode_util::deserialize_big(&row.value).expect("failed to deserialize TxVaultInfo");
         TxVaultRow { key, info }
     }
-
+    pub fn try_from_bytes(key: &[u8], value: &[u8]) -> Result<Self> {
+        let key = TxVaultKey::try_from_bytes(key)?;
+        let info = TxVaultInfo::try_from_bytes(value)?;
+        Ok(TxVaultRow { key, info })
+    }
     // pub fn get_txid(&self) -> Result<Txid> {
     //     Txid::from_str(&self.key.txid.as_str()).chain_err(|| "Invalid txid")
     // }
@@ -201,7 +205,7 @@ impl From<VaultTransaction> for TxVaultInfo {
             timestamp: 0,
             change_amount,
             change_address,
-            destination_chain_id: u64::from_be_bytes(return_tx.destination_chain_id),
+            destination_chain: u64::from_be_bytes(return_tx.destination_chain),
             destination_contract_address: hex::encode(return_tx.destination_contract_address),
             destination_recipient_address: hex::encode(return_tx.destination_recipient_address),
         }
@@ -232,9 +236,9 @@ impl VaultStore {
             .vault_txs
             .get(key.as_slice())
             .chain_err(|| "TxVault not found")?;
-        TxVaultInfo::try_from(&value).chain_err(|| "Invalid value")
+        TxVaultInfo::try_from_bytes(&value).chain_err(|| "Invalid value")
     }
-    pub fn get_lastest_transactions(
+    pub fn get_transactions_from_hash(
         &self,
         batch_size: usize,
         last_vault_tx_hash: Option<&str>,
@@ -243,7 +247,7 @@ impl VaultStore {
             .map(|v| TxVaultKey::try_from_hex(v))
             .transpose()?;
         let mut tx_vaults = Vec::new();
-        match last_key {
+        let mut iter = match last_key {
             Some(key) => {
                 debug!("Get latest vault tx from key: {:?}", &key);
                 // let mut iter = self
@@ -252,72 +256,45 @@ impl VaultStore {
                 let mut iter = self.vault_txs().raw_iterator();
                 iter.seek(key.as_bytes());
                 iter.next();
-                while (tx_vaults.len() < batch_size) && iter.valid() {
-                    if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
-                        if key.len() >= HASH_LEN + 8 {
-                            let key = TxVaultKey::try_from_bytes(&key[0..])?;
-                            let info = TxVaultInfo::try_from(&value)?;
-                            tx_vaults.push(TxVaultRow { key, info });
-                        }
-                    }
-                    iter.next();
-                }
+                iter
             }
 
             None => {
                 let mut iter = self.vault_txs().raw_iterator();
                 iter.seek_to_first();
-                while tx_vaults.len() < batch_size && iter.valid() {
-                    if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
-                        let key = TxVaultKey::try_from_bytes(&key[0..])?;
-                        let info = TxVaultInfo::try_from(&value)?;
-                        tx_vaults.push(TxVaultRow { key, info })
-                    }
-                    iter.next();
+                iter
+            }
+        };
+        while (tx_vaults.len() < batch_size) && iter.valid() {
+            if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
+                debug!("key: {:?} with length {:?}", hex::encode(key), key.len());
+                if key.len() >= HASH_LEN + 8 {
+                    let row = TxVaultRow::try_from_bytes(&key[0..], &value)?;
+                    debug!("TxVaultRow: {:?}", row);
+                    tx_vaults.push(row);
                 }
             }
+            iter.next();
         }
         Ok(tx_vaults)
     }
-
-    pub fn get_transactions_from_hash(
-        &self,
-        hash: Option<Vec<u8>>, //hex string
-        length: usize,
-    ) -> Result<Vec<TxVaultInfo>> {
-        let mut tx_vaults = Vec::new();
-        let key = hash
-            .map(|v| TxVaultKey::try_from_bytes(v.as_slice()))
-            .transpose()?;
-        match key {
-            Some(key) => {
-                let mut iter = self
-                    .vault_txs()
-                    .forward_iterator_from(key.as_bytes().as_slice());
-                while tx_vaults.len() < length {
-                    let Some(Ok((_, value))) = iter.next() else {
-                        break;
-                    };
-                    let tx_vault = TxVaultInfo::try_from(&value)?;
-                    tx_vaults.push(tx_vault);
-                }
-            }
-
-            None => {
-                let mut iter = self.vault_txs().raw_iterator();
-                iter.seek_to_first();
-                while tx_vaults.len() < length && iter.valid() {
-                    let Some(value) = iter.value() else {
-                        break;
-                    };
-                    let tx_vault = TxVaultInfo::try_from(&value)?;
-                    tx_vaults.push(tx_vault);
-                    iter.next();
-                }
-            }
-        };
-
-        Ok(tx_vaults)
+    pub fn get_last_vault(&self) -> Result<TxVaultRow> {
+        let mut iter = self.vault_txs().raw_iterator();
+        iter.seek_to_last();
+        while iter.valid() {
+            let Some(row) = iter
+                .key()
+                .zip(iter.value())
+                .and_then(|(key, value)| TxVaultRow::try_from_bytes(&key[0..], &value).ok())
+            else {
+                debug!("No vault transaction found. Try to get previous item");
+                iter.prev();
+                continue;
+            };
+            debug!("Get last vault transaction: {:?}", row);
+            return Ok(row);
+        }
+        Err(Error::from("No vault transaction found"))
     }
 }
 pub struct VaultIndexer {
@@ -344,7 +321,6 @@ impl VaultIndexer {
         let vault_rows: Vec<TxVaultRow> = block_entries
             .par_iter() // serialization is CPU-intensive
             .map(|b| {
-                debug!("--- Indexing block {:?}", b.entry.height());
                 let mut rows = vec![];
                 for (idx, tx) in b.block.txdata.iter().enumerate() {
                     let height = b.entry.height() as u32;
@@ -387,7 +363,6 @@ impl VaultIndexer {
         //Todo: Set staker address and pubkey by first txin
         match self.staking_parser.parse(tx) {
             Ok(vault_tx) => {
-                debug!("--- vault_tx_id: {:?}", vault_tx.txid);
                 let first_txin = vault_tx.inputs.first();
                 let staker_pubkey = self.extract_script_pubkey(first_txin);
                 let staker_address = self.extract_staker_address(first_txin);

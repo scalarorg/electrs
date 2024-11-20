@@ -6,4 +6,5 @@ target
 *.pyc
 .vscode
 *.env
+.DS_Store
 electrs

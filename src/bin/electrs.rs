@@ -51,6 +51,7 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         config.cookie_getter(),
         config.network_type,
         config.magic,
+        config.fetch_size,
         signal.clone(),
         &metrics,
     )?);
