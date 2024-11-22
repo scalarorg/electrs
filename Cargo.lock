@@ -252,6 +252,7 @@ dependencies = [
 [[package]]
 name = "bitcoin-vault"
 version = "0.1.0"
+source = "git+https://github.com/scalarorg/bitcoin-vault?rev=01110a1#01110a10a1c59d885a86be5d067282287ccd2438"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.4",
