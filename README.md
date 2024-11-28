@@ -1,4 +1,9 @@
-# Mempool - Electrs backend API
+# Scalar - Electrs
+
+Extended from mempool's electrs with modifications for Scalar Vault transactions indexing.
+Vault transactions are defined by OP_RETURN with a specific prefix tag SCALAR.
+
+# Mempool - Electrs
 
 A block chain index engine and HTTP API written in Rust based on [romanz/electrs](https://github.com/romanz/electrs) and [Blockstream/electrs](https://github.com/Blockstream/electrs).
 
@@ -37,7 +42,7 @@ With this option set, raw transactions and metadata associated with blocks will 
 (the `T`, `X` and `M` indexes),
 but instead queried from bitcoind on demand.
 
-### Notable changes from Electrs:
+### Notable changes from Electrs
 
 - HTTP REST API in addition to the Electrum JSON-RPC protocol, with extended transaction information
   (previous outputs, spending transactions, script asm and more).
@@ -70,9 +75,11 @@ In addition to electrs's original configuration options, a few new options are a
 - `--electrum-banner <text>` - welcome banner text for electrum server.
 
 Additional options with the `liquid` feature:
+
 - `--parent-network <network>` - the parent network this chain is pegged to.
 
 Additional options with the `electrum-discovery` feature:
+
 - `--electrum-hosts <json>` - a json map of the public hosts where the electrum server is reachable, in the [`server.features` format](https://electrumx.readthedocs.io/en/latest/protocol-methods.html#server.features).
 - `--electrum-announce` - announce the electrum server on the electrum p2p server discovery network.
 
