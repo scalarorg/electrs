@@ -11,7 +11,10 @@ use crate::util::{bincode_util, full_hash, Bytes, ScriptToAddr};
 use bitcoin::consensus::Encodable;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, ScriptBuf, TxIn, TxOut, Txid};
-use bitcoin_vault::types::{VaultChangeTxOutput, VaultTransaction};
+use bitcoin_vault::{
+    types::{VaultChangeTxOutput, VaultReturnTxOutputType, VaultTransaction},
+    SERVICE_TAG_HASH_SIZE,
+};
 use bitcoin_vault::{ParsingStaking, StakingParser};
 use rayon::prelude::*;
 use serde_json::Value;
@@ -43,9 +46,12 @@ pub struct TxVaultInfo {
     pub timestamp: u32,
     pub change_amount: Option<u64>,
     pub change_address: Option<String>,
+    pub service_tag: [u8; SERVICE_TAG_HASH_SIZE],
+    pub covenant_quorum: u8,
+    pub vault_tx_type: u8, //1.Staking, 2.Unstaking
     // Destination chain family(1 byte) and id(7 bytes)
     pub destination_chain: u64,
-    pub destination_contract_address: String,  //Hex string
+    pub destination_token_address: String,     //Hex string
     pub destination_recipient_address: String, //Hex string
 }
 
@@ -193,7 +199,10 @@ impl From<VaultTransaction> for TxVaultInfo {
             } else {
                 (None, None)
             };
-
+        let vault_tx_type = match return_tx.transaction_type {
+            VaultReturnTxOutputType::Unstaking => 2_u8,
+            VaultReturnTxOutputType::Staking => 1_u8,
+        };
         TxVaultInfo {
             confirmed_height: 0,
             txid,
@@ -205,8 +214,11 @@ impl From<VaultTransaction> for TxVaultInfo {
             timestamp: 0,
             change_amount,
             change_address,
+            vault_tx_type,
+            service_tag: return_tx.service_tag,
+            covenant_quorum: return_tx.covenant_quorum,
             destination_chain: u64::from_be_bytes(return_tx.destination_chain),
-            destination_contract_address: hex::encode(return_tx.destination_contract_address),
+            destination_token_address: hex::encode(return_tx.destination_token_address),
             destination_recipient_address: hex::encode(return_tx.destination_recipient_address),
         }
     }

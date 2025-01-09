@@ -67,7 +67,7 @@ tokio = { version = "1", features = ["sync", "macros"] }
 
 # optional dependencies for electrum-discovery
 electrum-client = { version = "0.8", optional = true }
-bitcoin-vault = { git = "https://github.com/scalarorg/bitcoin-vault", rev = "01110a1" }
+bitcoin-vault = { git = "https://github.com/scalarorg/bitcoin-vault", rev = "ed0a5b6" }
 # bitcoin-vault = {path="../bitcoin-vault/vault", package="bitcoin-vault"}
 
 

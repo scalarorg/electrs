@@ -21,8 +21,8 @@ testnet4() {
     # stop height it not working yet
     # export STOP_HEIGHT=52650
     export FETCH_SIZE=64
-    export VAULT_TAG="SCALAR"
-    export VAULT_VERSION=0
+    export TAG=SCALAR
+    export VERSION=1
     $DIR/start.scalar testnet4
 }
 
