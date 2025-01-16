@@ -216,7 +216,7 @@ impl From<VaultTransaction> for TxVaultInfo {
             change_address,
             vault_tx_type,
             service_tag: return_tx.service_tag,
-            covenant_quorum: return_tx.covenant_quorum,
+            covenant_quorum: return_tx.custodian_quorum,
             destination_chain: u64::from_be_bytes(return_tx.destination_chain),
             destination_token_address: hex::encode(return_tx.destination_token_address),
             destination_recipient_address: hex::encode(return_tx.destination_recipient_address),
