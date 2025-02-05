@@ -207,7 +207,13 @@ impl From<VaultTransaction> for TxVaultInfo {
             confirmed_height: 0,
             txid,
             tx_position: 0,
-            amount: lock_tx.amount.to_sat(),
+            amount: {
+                if let Some(lock_tx) = lock_tx {
+                    lock_tx.amount.to_sat()
+                } else {
+                    0
+                }
+            },
             staker_address: None,
             staker_pubkey: None,
             tx_content,
