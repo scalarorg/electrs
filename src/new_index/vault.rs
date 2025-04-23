@@ -21,8 +21,6 @@ use serde_json::Value;
 
 #[cfg(feature = "liquid")]
 use crate::elements::{asset, peg};
-#[cfg(not(feature = "liquid"))]
-use bitcoin::consensus::encode::{deserialize, serialize};
 #[cfg(feature = "liquid")]
 use elements::{
     encode::{deserialize, serialize},
@@ -53,6 +51,8 @@ pub struct TxVaultInfo {
     pub destination_chain: u64,
     pub destination_token_address: String,     //Hex string
     pub destination_recipient_address: String, //Hex string
+    pub session_sequence: u64,
+    pub custodian_group_uid: [u8; HASH_LEN],
 }
 
 impl TxVaultInfo {
@@ -200,8 +200,8 @@ impl From<VaultTransaction> for TxVaultInfo {
                 (None, None)
             };
         let vault_tx_type = match return_tx.transaction_type {
-            VaultReturnTxOutputType::Unstaking => 2_u8,
-            VaultReturnTxOutputType::Staking => 1_u8,
+            VaultReturnTxOutputType::Unlocking => 2_u8,
+            VaultReturnTxOutputType::Locking => 1_u8,
         };
         TxVaultInfo {
             confirmed_height: 0,
@@ -226,6 +226,8 @@ impl From<VaultTransaction> for TxVaultInfo {
             destination_chain: u64::from_be_bytes(return_tx.destination_chain),
             destination_token_address: hex::encode(return_tx.destination_token_address),
             destination_recipient_address: hex::encode(return_tx.destination_recipient_address),
+            session_sequence: return_tx.session_sequence,
+            custodian_group_uid: return_tx.custodian_group_uid,
         }
     }
 }
