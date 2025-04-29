@@ -53,6 +53,7 @@ pub struct TxVaultInfo {
     pub destination_recipient_address: String, //Hex string
     pub session_sequence: u64,
     pub custodian_group_uid: [u8; HASH_LEN],
+    pub script_pubkey: Vec<u8>,
 }
 
 impl TxVaultInfo {
@@ -186,6 +187,7 @@ impl From<VaultTransaction> for TxVaultInfo {
             txid,
             tx_content,
             inputs,
+            outputs,
             lock_tx,
             return_tx,
             change_tx,
@@ -228,6 +230,7 @@ impl From<VaultTransaction> for TxVaultInfo {
             destination_recipient_address: hex::encode(return_tx.destination_recipient_address),
             session_sequence: return_tx.session_sequence,
             custodian_group_uid: return_tx.custodian_group_uid,
+            script_pubkey: return_tx.script_pubkey.to_bytes(),
         }
     }
 }
