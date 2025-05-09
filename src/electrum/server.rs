@@ -151,7 +151,10 @@ impl Connection {
     fn blockchain_headers_subscribe(&mut self) -> Result<Value> {
         let entry = self.query.chain().best_header();
         let hex_header = hex::encode(serialize(entry.header()));
-        let result = json!({"hex": hex_header, "height": entry.height()});
+        let result = json!({
+            "hex": hex_header, 
+            "hash": hex::encode(entry.hash()),
+            "height": entry.height()});
         self.last_header_entry = Some(entry);
         Ok(result)
     }
