@@ -34,6 +34,7 @@ const HASH_LEN: usize = 32;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxVaultInfo {
     pub confirmed_height: u32,
+    pub block_hash: String,
     pub txid: Txid,
     pub tx_position: u32,
     pub amount: u64,
@@ -207,6 +208,7 @@ impl From<VaultTransaction> for TxVaultInfo {
         };
         TxVaultInfo {
             confirmed_height: 0,
+            block_hash: "".to_string(),
             txid,
             tx_position: 0,
             amount: {
@@ -348,7 +350,14 @@ impl VaultIndexer {
                 for (idx, tx) in b.block.txdata.iter().enumerate() {
                     let height = b.entry.height() as u32;
                     let block_timestamp = b.entry.header().time;
-                    self.index_transaction(tx, height, idx as u32, block_timestamp, &mut rows);
+                    self.index_transaction(
+                        tx,
+                        height,
+                        hex::encode(b.entry.hash().as_byte_array()),
+                        idx as u32,
+                        block_timestamp,
+                        &mut rows,
+                    );
                 }
                 rows
             })
@@ -379,6 +388,7 @@ impl VaultIndexer {
         &self,
         tx: &Transaction,
         confirmed_height: u32,
+        block_hash: String,
         tx_position: u32,
         block_timestamp: u32,
         rows: &mut Vec<TxVaultRow>,
@@ -393,6 +403,7 @@ impl VaultIndexer {
                 let mut vault_info = TxVaultInfo::from(vault_tx);
                 vault_info.timestamp = block_timestamp;
                 vault_info.confirmed_height = confirmed_height;
+                vault_info.block_hash = block_hash;
                 vault_info.tx_position = tx_position;
                 vault_info.staker_pubkey = staker_pubkey;
                 vault_info.staker_address = staker_address;
@@ -489,7 +500,7 @@ mod tests {
             })
         {
             let mut rows = vec![];
-            vault_indexer.index_transaction(&tx, 1, 0, 0, &mut rows);
+            vault_indexer.index_transaction(&tx, 1, String::new(), 0, 0, &mut rows);
             assert_eq!(rows.len(), 1);
             let vault_row = rows.pop().unwrap();
             assert_eq!(vault_row.info.amount, test_data.amount);
