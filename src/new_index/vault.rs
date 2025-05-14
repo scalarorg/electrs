@@ -206,6 +206,10 @@ impl From<VaultTransaction> for TxVaultInfo {
             VaultReturnTxOutputType::Unlocking => 2_u8,
             VaultReturnTxOutputType::Locking => 1_u8,
         };
+        let script_pubkey = outputs
+            .first()
+            .map(|output| output.script_pubkey.to_bytes())
+            .unwrap_or_default();
         TxVaultInfo {
             confirmed_height: 0,
             block_hash: "".to_string(),
@@ -232,7 +236,7 @@ impl From<VaultTransaction> for TxVaultInfo {
             destination_recipient_address: hex::encode(return_tx.destination_recipient_address),
             session_sequence: return_tx.session_sequence,
             custodian_group_uid: return_tx.custodian_group_uid,
-            script_pubkey: return_tx.script_pubkey.to_bytes(),
+            script_pubkey,
         }
     }
 }
