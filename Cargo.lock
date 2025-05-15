@@ -1492,7 +1492,7 @@ dependencies = [
 [[package]]
 name = "macros"
 version = "0.1.0"
-source = "git+https://github.com/scalarorg/bitcoin-vault?rev=9405b54#9405b54725a52631abd516cdaa5e12fe001a0071"
+source = "git+https://github.com/scalarorg/bitcoin-vault?rev=8533870#8533870c7a1b39c062d3e9fd9926883b1c748609"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3050,7 +3050,7 @@ dependencies = [
 [[package]]
 name = "vault"
 version = "0.1.0"
-source = "git+https://github.com/scalarorg/bitcoin-vault?rev=9405b54#9405b54725a52631abd516cdaa5e12fe001a0071"
+source = "git+https://github.com/scalarorg/bitcoin-vault?rev=8533870#8533870c7a1b39c062d3e9fd9926883b1c748609"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.5",

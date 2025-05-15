@@ -207,7 +207,7 @@ impl From<VaultTransaction> for TxVaultInfo {
             VaultReturnTxOutputType::Locking => 1_u8,
         };
         let script_pubkey = outputs
-            .first()
+            .get(1)
             .map(|output| output.script_pubkey.to_bytes())
             .unwrap_or_default();
         TxVaultInfo {
@@ -513,7 +513,37 @@ mod tests {
             println!("Failed to decode tx hex");
         }
     }
-
+    #[test]
+    fn test_parse_vault_tx() {
+        let tag = "SCALAR".as_bytes().to_vec();
+        let version = 3;
+        let staking_parser = StakingParser::new(tag.clone(), version);
+        let test_data = TestData {
+            tx_hex: "02000000000102efb8da1b0ae26ab9b7b25c5f044d5b02684d5471c77d6e1f08de98b1501f6d576300000000ffffffffedae00f4acb83258db5c03e638864cf131ee6997a96f65fb8d7792ad9d3138636300000000ffffffff030000000000000000416a3f5343414c4152030140706f6f6c73030100000000aa36a72ca3698a551a57169e73b0b2566a106ddec1b7b6913560c5613a1f56cedb44e338441968cea824950d26000000000000225120a8fc50d87f16d892b4d4d087d259c0ab417e106b044b291a7728d2ae1343de7f0b860100000000001600143f80b86ad8975ec3db0299f8d637cf3e678a23ab024830450221009c9bac187d97243444ee30a6febb2d8850554aa08a23345cc1b0ef2112f8e9830220394df5439ad77eda57fbd51121987aaff563c92321e5502b7c47ba79b8ffa677012102ddd45dd5601e1c0d56ccc065817d363f008840b8a7ab1f0f3cb17636aad9dfca0247304402203b61cc79d519f0308f8a260b66c250bce14be86cb33da396ae5d73a252dbd46102200644d2c7a8847d02da3631dce2ffabb0833ed1371c14a43e517e0135b7cf9e12012102ddd45dd5601e1c0d56ccc065817d363f008840b8a7ab1f0f3cb17636aad9dfca00000000",
+            amount: 10000,
+        };
+        if let Ok(tx) = hex::decode(test_data.tx_hex)
+            .map_err(|_| ParserError::InvalidTransactionHex)
+            .and_then(|raw_tx| {
+                Decodable::consensus_decode(&mut raw_tx.as_slice())
+                    .map_err(|_| ParserError::InvalidTransactionHex)
+            })
+        {
+            let res = staking_parser.parse(&tx);
+            println!("res: {:?}", res);
+            assert!(res.is_ok(), "Failed to parse vault tx");
+            let vault_tx = res.unwrap();
+            assert!(vault_tx.outputs.len() > 1);
+            let second_output = vault_tx.outputs.get(1).unwrap();
+            let script_pubkey = &second_output.script_pubkey;
+            assert_eq!(
+                "5120a8fc50d87f16d892b4d4d087d259c0ab417e106b044b291a7728d2ae1343de7f",
+                script_pubkey.to_hex_string()
+            );
+            let address = script_pubkey.to_address_str(Network::Testnet4);
+            println!("address: {:?}", address);
+        }
+    }
     fn create_test_config() -> Config {
         Config::from_args()
     }
