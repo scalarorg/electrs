@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use crate::errors::Result;
-use crate::new_index::vault::TxVaultRow;
-use crate::new_index::Query;
+use crate::new_index::{Query, TxVaultRow};
 
 pub struct VaultServer {
     query: Arc<Query>,

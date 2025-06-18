@@ -1,4 +1,39 @@
-struct IndexerConfig {
+#[cfg(not(feature = "liquid"))]
+use bitcoin::ScriptBuf;
+use itertools::Itertools;
+use rayon::prelude::*;
+use sha2::Digest;
+
+#[cfg(not(feature = "liquid"))]
+use bitcoin::consensus::encode::{deserialize, serialize};
+#[cfg(feature = "liquid")]
+use elements::{
+    encode::{deserialize, serialize},
+    AssetId,
+};
+
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
+
+use crate::{
+    chain::{BlockHash, Network, OutPoint, Transaction, TxOut, Txid, Value},
+    config::Config,
+    daemon::Daemon,
+    errors::*,
+    metrics::{Gauge, HistogramOpts, HistogramTimer, HistogramVec, MetricOpts, Metrics},
+    new_index::{
+        start_fetcher, BlockRow, DBFlush, DBRow, Store, TxConfRow, TxEdgeRow, TxHistoryInfo,
+        TxHistoryRow, TxOutRow, TxRow, DB,
+    },
+    util::{full_hash, has_prevout, is_spendable, BlockMeta, FullHash, HeaderEntry, ScriptToAddr},
+};
+
+use super::{
+    vault::{self},
+    BlockEntry, FetchFrom, FundingInfo, SpendingInfo,
+};
+
+pub struct IndexerConfig {
     light_mode: bool,
     address_search: bool,
     index_unspendables: bool,
@@ -282,7 +317,7 @@ fn get_previous_txos(block_entries: &[BlockEntry]) -> BTreeSet<OutPoint> {
         .collect()
 }
 
-fn lookup_txos(
+pub fn lookup_txos(
     txstore_db: &DB,
     outpoints: &BTreeSet<OutPoint>,
     allow_missing: bool,
@@ -441,8 +476,4 @@ fn addr_search_row(spk: &ScriptBuf, network: Network) -> Option<DBRow> {
         key: [b"a", address.as_bytes()].concat(),
         value: vec![],
     })
-}
-
-fn addr_search_filter(prefix: &str) -> Bytes {
-    [b"a", prefix.as_bytes()].concat()
 }

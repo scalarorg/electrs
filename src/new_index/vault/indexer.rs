@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use super::{BlockEntry, Store, TxVaultInfo, TxVaultKey, TxVaultRow};
 use crate::chain::{Network, Transaction};
-use crate::new_index::lookup_txo;
+use crate::new_index::{lookup_txo, BlockEntry, Store, TxVaultInfo, TxVaultKey, TxVaultRow};
 use crate::util::ScriptToAddr;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, ScriptBuf, TxIn, TxOut};

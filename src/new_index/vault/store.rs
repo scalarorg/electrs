@@ -1,10 +1,10 @@
-use super::db::DBFlush;
-use super::{DBRow, DB};
 use super::{TxVaultInfo, TxVaultKey, TxVaultRow};
+use crate::new_index::{DBRow, DB};
 use std::path::Path;
 
 use crate::config::Config;
 use crate::errors::*;
+use crate::new_index::DBFlush;
 
 const HASH_LEN: usize = 32;
 

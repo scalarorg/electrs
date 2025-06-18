@@ -2,7 +2,7 @@ extern crate electrs;
 
 use std::{convert::TryInto, thread::ThreadId, time::Instant};
 
-use electrs::{config::Config, new_index::db::open_raw_db};
+use electrs::{config::Config, new_index::open_raw_db};
 use lazy_static::lazy_static;
 
 /*

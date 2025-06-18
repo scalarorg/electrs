@@ -1,16 +1,41 @@
-use std::sync::{Arc, RwLock};
+#[cfg(not(feature = "liquid"))]
+use bitcoin::VarInt;
 
-use bitcoin::{consensus::serialize, VarInt};
-use prometheus::{HistogramOpts, HistogramTimer, HistogramVec};
-
-use crate::{
-    chain::{BlockHash, BlockHeader, Network, OutPoint, Transaction, TxOut, Txid, Value},
-    config::Config,
-    daemon::Daemon,
-    metrics::Metrics,
-    new_index::{BlockRow, ScanIterator, Store, TxHistoryRow},
-    util::{bincode_util, full_hash, BlockHeaderMeta, BlockMeta},
+#[cfg(not(feature = "liquid"))]
+use bitcoin::consensus::encode::{deserialize, serialize};
+#[cfg(feature = "liquid")]
+use elements::{
+    encode::{deserialize, serialize},
+    AssetId,
 };
+
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::convert::TryInto;
+use std::sync::Arc;
+
+use itertools::Itertools;
+use rayon::iter::ParallelBridge;
+use rayon::iter::ParallelIterator;
+
+use crate::daemon::Daemon;
+use crate::errors::*;
+use crate::metrics::{HistogramOpts, HistogramTimer, HistogramVec, Metrics};
+use crate::util::{
+    bincode_util, full_hash, BlockHeaderMeta, BlockId, BlockMeta, BlockStatus, Bytes, HeaderEntry,
+};
+use crate::{
+    chain::{BlockHash, BlockHeader, Network, OutPoint, Transaction, TxOut, Txid},
+    new_index::{
+        BlockRow, ReverseScanGroupIterator, ScriptStats, SpendingInput, StatsCacheRow, Store,
+        TxConfRow, TxEdgeRow, TxHistoryInfo, TxHistoryRow, TxHistorySummary, TxRow, Utxo,
+        UtxoCacheRow, UtxoMap,
+    },
+};
+use crate::{config::Config, new_index::lookup_txo};
+
+use crate::new_index::db::{DBFlush, ReverseScanIterator, ScanIterator};
+
+use super::{lookup_txos, CachedUtxoMap};
 
 const MIN_HISTORY_ITEMS_TO_CACHE: usize = 100;
 
@@ -146,7 +171,7 @@ impl ChainQuery {
 
     pub fn get_mtp(&self, height: usize) -> u32 {
         let _timer = self.start_timer("get_block_mtp");
-        self.store.indexed_headers().read().unwrap().get_mtp(height)
+        self.store.indexed_headers.read().unwrap().get_mtp(height)
     }
 
     pub fn get_block_with_meta(&self, hash: &BlockHash) -> Option<BlockHeaderMeta> {
@@ -160,7 +185,7 @@ impl ChainQuery {
     }
 
     pub fn history_iter_scan(&self, code: u8, hash: &[u8], start_height: usize) -> ScanIterator {
-        self.store.history_db.iter_scan_from(
+        self.store.history_db().iter_scan_from(
             &TxHistoryRow::filter(code, hash),
             &TxHistoryRow::prefix_height(code, hash, start_height as u32),
         )
@@ -171,7 +196,7 @@ impl ChainQuery {
         hash: &[u8],
         start_height: Option<u32>,
     ) -> ReverseScanIterator {
-        self.store.history_db.iter_scan_reverse(
+        self.store.history_db().iter_scan_reverse(
             &TxHistoryRow::filter(code, hash),
             &start_height.map_or(TxHistoryRow::prefix_end(code, hash), |start_height| {
                 TxHistoryRow::prefix_height_end(code, hash, start_height)
@@ -184,7 +209,7 @@ impl ChainQuery {
         hashes: &[[u8; 32]],
         start_height: Option<u32>,
     ) -> ReverseScanGroupIterator {
-        self.store.history_db.iter_scan_group_reverse(
+        self.store.history_db().iter_scan_group_reverse(
             hashes.iter().map(|hash| {
                 let prefix = TxHistoryRow::filter(code, &hash[..]);
                 let prefix_max = start_height
@@ -455,7 +480,7 @@ impl ChainQuery {
         // invalidates the cache if the block was orphaned.
         let cache: Option<(UtxoMap, usize)> = self
             .store
-            .cache_db
+            .cache_db()
             .get(&UtxoCacheRow::key(scripthash))
             .map(|c| bincode_util::deserialize_little(&c).unwrap())
             .and_then(|(utxos_cache, blockhash)| {
@@ -474,7 +499,7 @@ impl ChainQuery {
         // save updated utxo set to cache
         if let Some(lastblock) = lastblock {
             if had_cache || processed_items > MIN_HISTORY_ITEMS_TO_CACHE {
-                self.store.cache_db.write(
+                self.store.cache_db().write(
                     vec![UtxoCacheRow::new(scripthash, &newutxos, &lastblock).into_row()],
                     flush,
                 );
@@ -563,7 +588,7 @@ impl ChainQuery {
         // invalidates the cache if the block was orphaned or if values are out of sync.
         let cache: Option<(ScriptStats, usize)> = self
             .store
-            .cache_db
+            .cache_db()
             .get(&StatsCacheRow::key(scripthash))
             .map(|c| bincode_util::deserialize_little::<(ScriptStats, BlockHash)>(&c).unwrap())
             // Check that the values are sane (No negative balances or balances with 0 utxos)
@@ -582,7 +607,7 @@ impl ChainQuery {
         // save updated stats to cache
         if let Some(lastblock) = lastblock {
             if newstats.funded_txo_count + newstats.spent_txo_count > MIN_HISTORY_ITEMS_TO_CACHE {
-                self.store.cache_db.write(
+                self.store.cache_db().write(
                     vec![StatsCacheRow::new(scripthash, &newstats, &lastblock).into_row()],
                     flush,
                 );
@@ -662,7 +687,7 @@ impl ChainQuery {
     pub fn address_search(&self, prefix: &str, limit: usize) -> Vec<String> {
         let _timer_scan = self.start_timer("address_search");
         self.store
-            .history_db
+            .history_db()
             .iter_scan(&addr_search_filter(prefix))
             .take(limit)
             .map(|row| std::str::from_utf8(&row.key[1..]).unwrap().to_string())
@@ -671,16 +696,17 @@ impl ChainQuery {
 
     fn header_by_hash(&self, hash: &BlockHash) -> Option<HeaderEntry> {
         self.store
-            .indexed_headers()
+            .indexed_headers
             .read()
             .unwrap()
             .header_by_blockhash(hash)
+            .cloned()
     }
 
     // Get the height of a blockhash, only if its part of the best chain
     pub fn height_by_hash(&self, hash: &BlockHash) -> Option<usize> {
         self.store
-            .indexed_headers()
+            .indexed_headers
             .read()
             .unwrap()
             .header_by_blockhash(hash)
@@ -689,15 +715,16 @@ impl ChainQuery {
 
     pub fn header_by_height(&self, height: usize) -> Option<HeaderEntry> {
         self.store
-            .indexed_headers()
+            .indexed_headers
             .read()
             .unwrap()
             .header_by_height(height)
+            .cloned()
     }
 
     pub fn hash_by_height(&self, height: usize) -> Option<BlockHash> {
         self.store
-            .indexed_headers()
+            .indexed_headers
             .read()
             .unwrap()
             .header_by_height(height)
@@ -706,7 +733,7 @@ impl ChainQuery {
 
     pub fn blockid_by_height(&self, height: usize) -> Option<BlockId> {
         self.store
-            .indexed_headers()
+            .indexed_headers
             .read()
             .unwrap()
             .header_by_height(height)
@@ -716,7 +743,7 @@ impl ChainQuery {
     // returns None for orphaned blocks
     pub fn blockid_by_hash(&self, hash: &BlockHash) -> Option<BlockId> {
         self.store
-            .indexed_headers()
+            .indexed_headers
             .read()
             .unwrap()
             .header_by_blockhash(hash)
@@ -724,15 +751,15 @@ impl ChainQuery {
     }
 
     pub fn best_height(&self) -> usize {
-        self.store.indexed_headers().read().unwrap().len() - 1
+        self.store.indexed_headers.read().unwrap().len() - 1
     }
 
     pub fn best_hash(&self) -> BlockHash {
-        *self.store.indexed_headers().read().unwrap().tip()
+        *self.store.indexed_headers.read().unwrap().tip()
     }
 
     pub fn best_header(&self) -> HeaderEntry {
-        let headers = self.store.indexed_headers().read().unwrap();
+        let headers = self.store.indexed_headers.read().unwrap();
         headers
             .header_by_blockhash(headers.tip())
             .expect("missing chain tip")
@@ -784,29 +811,29 @@ impl ChainQuery {
                 .ok()?;
             Some(hex::decode(txhex.as_str().unwrap()).unwrap())
         } else {
-            self.store.txstore_db.get(&TxRow::key(&txid[..]))
+            self.store.txstore_db().get(&TxRow::key(&txid[..]))
         }
     }
 
     pub fn lookup_txo(&self, outpoint: &OutPoint) -> Option<TxOut> {
         let _timer = self.start_timer("lookup_txo");
-        lookup_txo(&self.store.txstore_db, outpoint)
+        lookup_txo(&self.store.txstore_db(), outpoint)
     }
 
     pub fn lookup_txos(&self, outpoints: &BTreeSet<OutPoint>) -> HashMap<OutPoint, TxOut> {
         let _timer = self.start_timer("lookup_txos");
-        lookup_txos(&self.store.txstore_db, outpoints, false)
+        lookup_txos(&self.store.txstore_db(), outpoints, false)
     }
 
     pub fn lookup_avail_txos(&self, outpoints: &BTreeSet<OutPoint>) -> HashMap<OutPoint, TxOut> {
         let _timer = self.start_timer("lookup_available_txos");
-        lookup_txos(&self.store.txstore_db, outpoints, true)
+        lookup_txos(&self.store.txstore_db(), outpoints, true)
     }
 
     pub fn lookup_spend(&self, outpoint: &OutPoint) -> Option<SpendingInput> {
         let _timer = self.start_timer("lookup_spend");
         self.store
-            .history_db
+            .history_db()
             .iter_scan(&TxEdgeRow::filter(outpoint))
             .map(TxEdgeRow::from_row)
             .find_map(|edge| {
@@ -820,9 +847,9 @@ impl ChainQuery {
     }
     pub fn tx_confirming_block(&self, txid: &Txid) -> Option<BlockId> {
         let _timer = self.start_timer("tx_confirming_block");
-        let headers = self.store.indexed_headers().read().unwrap();
+        let headers = self.store.indexed_headers.read().unwrap();
         self.store
-            .txstore_db
+            .txstore_db()
             .iter_scan(&TxConfRow::filter(&txid[..]))
             .map(TxConfRow::from_row)
             // header_by_blockhash only returns blocks that are part of the best chain,
@@ -838,7 +865,7 @@ impl ChainQuery {
         // TODO differentiate orphaned and non-existing blocks? telling them apart requires
         // an additional db read.
 
-        let headers = self.store.indexed_headers().read().unwrap();
+        let headers = self.store.indexed_headers.read().unwrap();
 
         // header_by_blockhash only returns blocks that are part of the best chain,
         // or None for orphaned blocks.
@@ -890,4 +917,21 @@ impl ChainQuery {
     pub fn asset_history_txids(&self, asset_id: &AssetId, limit: usize) -> Vec<(Txid, BlockId)> {
         self._history_txids(b'I', &asset_id.into_inner()[..], limit)
     }
+}
+
+pub fn addr_search_filter(prefix: &str) -> Bytes {
+    [b"a", prefix.as_bytes()].concat()
+}
+
+pub fn from_utxo_cache(utxos_cache: CachedUtxoMap, chain: &ChainQuery) -> UtxoMap {
+    utxos_cache
+        .into_iter()
+        .map(|((txid, vout), (height, value))| {
+            let outpoint = OutPoint { txid, vout };
+            let blockid = chain
+                .blockid_by_height(height as usize)
+                .expect("missing blockheader for valid utxo cache entry");
+            (outpoint, (blockid, value))
+        })
+        .collect()
 }

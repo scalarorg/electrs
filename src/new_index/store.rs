@@ -1,14 +1,43 @@
+#[cfg(not(feature = "liquid"))]
+use itertools::Itertools;
+use rayon::prelude::*;
+use sha2::Digest;
+
+#[cfg(not(feature = "liquid"))]
+use bitcoin::consensus::encode::deserialize;
+#[cfg(feature = "liquid")]
+use elements::{
+    encode::{deserialize, serialize},
+    AssetId,
+};
+
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::{Arc, RwLock};
+
+use crate::config::Config;
+use crate::util::HeaderList;
+use crate::{
+    chain::{BlockHash, BlockHeader},
+    new_index::BlockRow,
+};
+
+use crate::new_index::db::DB;
+
+#[cfg(feature = "liquid")]
+use crate::elements::{asset, peg};
+
+use super::VaultStore;
 
 pub struct Store {
     // TODO: should be column families
-    txstore_db: DB,
-    history_db: DB,
-    cache_db: DB,
-    vault_store: Arc<VaultStore>,
-    added_blockhashes: RwLock<HashSet<BlockHash>>,
-    indexed_blockhashes: RwLock<HashSet<BlockHash>>,
-    indexed_headers: RwLock<HeaderList>,
+    pub txstore_db: DB,
+    pub history_db: DB,
+    pub cache_db: DB,
+    pub vault_store: Arc<VaultStore>,
+    pub added_blockhashes: RwLock<HashSet<BlockHash>>,
+    pub indexed_blockhashes: RwLock<HashSet<BlockHash>>,
+    pub indexed_headers: RwLock<HeaderList>,
 }
 
 impl Store {
@@ -61,10 +90,6 @@ impl Store {
         &self.cache_db
     }
 
-    pub fn indexed_headers(&self) -> &HeaderList {
-        &self.indexed_headers
-    }
-
     pub fn vault_store(&self) -> Arc<VaultStore> {
         Arc::clone(&self.vault_store)
     }
@@ -72,4 +97,22 @@ impl Store {
     pub fn done_initial_sync(&self) -> bool {
         self.txstore_db.get(b"t").is_some()
     }
+}
+
+fn load_blockhashes(db: &DB, prefix: &[u8]) -> HashSet<BlockHash> {
+    db.iter_scan(prefix)
+        .map(BlockRow::from_row)
+        .map(|r| deserialize(&r.key.hash).expect("failed to parse BlockHash"))
+        .collect()
+}
+
+fn load_blockheaders(db: &DB) -> HashMap<BlockHash, BlockHeader> {
+    db.iter_scan(&BlockRow::header_filter())
+        .map(BlockRow::from_row)
+        .map(|r| {
+            let key: BlockHash = deserialize(&r.key.hash).expect("failed to parse BlockHash");
+            let value: BlockHeader = deserialize(&r.value).expect("failed to parse BlockHeader");
+            (key, value)
+        })
+        .collect()
 }

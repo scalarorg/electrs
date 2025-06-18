@@ -1,5 +1,5 @@
-use super::DBRow;
 use crate::errors::*;
+use crate::new_index::DBRow;
 use crate::util::{bincode_util, full_hash, Bytes};
 use bitcoin::consensus::Encodable;
 use bitcoin::hashes::Hash;
@@ -108,26 +108,26 @@ pub struct TxVaultRow {
 }
 
 impl TxVaultRow {
-    fn new(key: TxVaultKey, info: TxVaultInfo) -> Self {
-        Self { key, info }
-    }
-    fn filter(code: u8, hash_prefix: &[u8]) -> Bytes {
-        [&[code], hash_prefix].concat()
-    }
+    // fn new(key: TxVaultKey, info: TxVaultInfo) -> Self {
+    //     Self { key, info }
+    // }
+    // fn filter(code: u8, hash_prefix: &[u8]) -> Bytes {
+    //     [&[code], hash_prefix].concat()
+    // }
 
-    fn prefix_end(code: u8, hash: &[u8]) -> Bytes {
-        bincode_util::serialize_big(&(code, full_hash(hash), u32::MAX)).unwrap()
-    }
+    // fn prefix_end(code: u8, hash: &[u8]) -> Bytes {
+    //     bincode_util::serialize_big(&(code, full_hash(hash), u32::MAX)).unwrap()
+    // }
 
-    fn prefix_height(code: u8, hash: &[u8], height: u32) -> Bytes {
-        bincode_util::serialize_big(&(code, full_hash(hash), height)).unwrap()
-    }
+    // fn prefix_height(code: u8, hash: &[u8], height: u32) -> Bytes {
+    //     bincode_util::serialize_big(&(code, full_hash(hash), height)).unwrap()
+    // }
 
-    // prefix representing the end of a given block (used for reverse scans)
-    fn prefix_height_end(code: u8, hash: &[u8], height: u32) -> Bytes {
-        // u16::MAX for the tx_position ensures we get all transactions at this height
-        bincode_util::serialize_big(&(code, full_hash(hash), height, u16::MAX)).unwrap()
-    }
+    // // prefix representing the end of a given block (used for reverse scans)
+    // fn prefix_height_end(code: u8, hash: &[u8], height: u32) -> Bytes {
+    //     // u16::MAX for the tx_position ensures we get all transactions at this height
+    //     bincode_util::serialize_big(&(code, full_hash(hash), height, u16::MAX)).unwrap()
+    // }
 
     pub fn into_row(self) -> DBRow {
         let TxVaultRow { key, info } = self;

@@ -30,8 +30,7 @@ use crate::config::{Config, VERSION_STRING};
 use crate::electrum::{get_electrum_height, ProtocolVersion};
 use crate::errors::*;
 use crate::metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
-use crate::new_index::vault::TxVaultRow;
-use crate::new_index::{Query, Utxo};
+use crate::new_index::{Query, TxVaultRow, Utxo};
 use crate::util::electrum_merkle::{get_header_merkle_proof, get_id_from_pos, get_tx_merkle_proof};
 use crate::util::{
     create_socket, full_hash, spawn_thread, BlockId, BoolThen, Channel, FullHash, HeaderEntry,

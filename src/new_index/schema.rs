@@ -1,5 +1,4 @@
 #[cfg(not(feature = "liquid"))]
-use bitcoin::VarInt;
 use bitcoin::{hashes::sha256d::Hash as Sha256dHash, ScriptBuf};
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -13,33 +12,19 @@ use elements::{
     AssetId,
 };
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::HashMap;
 use std::convert::TryInto;
-use std::path::Path;
-use std::sync::{Arc, RwLock};
 
-use crate::chain::{BlockHash, BlockHeader, Network, OutPoint, Transaction, TxOut, Txid, Value};
-use crate::config::Config;
-use crate::daemon::Daemon;
-use crate::errors::*;
-use crate::metrics::{Gauge, HistogramOpts, HistogramTimer, HistogramVec, MetricOpts, Metrics};
-use crate::util::{
-    bincode_util, full_hash, has_prevout, is_spendable, BlockHeaderMeta, BlockId, BlockMeta,
-    BlockStatus, Bytes, HeaderEntry, HeaderList, ScriptToAddr,
-};
+use crate::chain::{BlockHash, OutPoint, Transaction, TxOut, Txid, Value};
+use crate::util::{bincode_util, full_hash, BlockId, BlockMeta, Bytes};
 
-use crate::new_index::db::{DBFlush, DBRow, ReverseScanIterator, ScanIterator, DB};
-use crate::new_index::fetch::{start_fetcher, BlockEntry, FetchFrom};
+use crate::new_index::db::DBRow;
+use crate::new_index::fetch::BlockEntry;
 
 #[cfg(feature = "liquid")]
 use crate::elements::{asset, peg};
 
-use super::{
-    db::ReverseScanGroupIterator,
-    vault::{self, VaultStore},
-};
-
-type UtxoMap = HashMap<OutPoint, (BlockId, Value)>;
+pub type UtxoMap = HashMap<OutPoint, (BlockId, Value)>;
 
 #[derive(Debug)]
 pub struct Utxo {
@@ -85,13 +70,13 @@ pub struct ScriptStats {
 
 impl ScriptStats {
     #[cfg(feature = "liquid")]
-    fn is_sane(&self) -> bool {
+    pub fn is_sane(&self) -> bool {
         // See below for comments.
         self.spent_txo_count <= self.funded_txo_count
             && self.tx_count <= self.spent_txo_count + self.funded_txo_count
     }
     #[cfg(not(feature = "liquid"))]
-    fn is_sane(&self) -> bool {
+    pub fn is_sane(&self) -> bool {
         // There are less or equal spends to funds
         self.spent_txo_count <= self.funded_txo_count
         // There are less or equal transactions to total spent+funded txo counts
@@ -106,37 +91,19 @@ impl ScriptStats {
     }
 }
 
-fn load_blockhashes(db: &DB, prefix: &[u8]) -> HashSet<BlockHash> {
-    db.iter_scan(prefix)
-        .map(BlockRow::from_row)
-        .map(|r| deserialize(&r.key.hash).expect("failed to parse BlockHash"))
-        .collect()
-}
-
-fn load_blockheaders(db: &DB) -> HashMap<BlockHash, BlockHeader> {
-    db.iter_scan(&BlockRow::header_filter())
-        .map(BlockRow::from_row)
-        .map(|r| {
-            let key: BlockHash = deserialize(&r.key.hash).expect("failed to parse BlockHash");
-            let value: BlockHeader = deserialize(&r.value).expect("failed to parse BlockHeader");
-            (key, value)
-        })
-        .collect()
-}
-
 #[derive(Serialize, Deserialize)]
-struct TxRowKey {
+pub struct TxRowKey {
     code: u8,
     txid: FullHash,
 }
 
-struct TxRow {
+pub struct TxRow {
     key: TxRowKey,
     value: Bytes, // raw transaction
 }
 
 impl TxRow {
-    fn new(txn: &Transaction) -> TxRow {
+    pub fn new(txn: &Transaction) -> TxRow {
         let txid = full_hash(&txn.compute_txid()[..]);
         TxRow {
             key: TxRowKey { code: b'T', txid },
@@ -144,11 +111,11 @@ impl TxRow {
         }
     }
 
-    fn key(prefix: &[u8]) -> Bytes {
+    pub fn key(prefix: &[u8]) -> Bytes {
         [b"T", prefix].concat()
     }
 
-    fn into_row(self) -> DBRow {
+    pub fn into_row(self) -> DBRow {
         let TxRow { key, value } = self;
         DBRow {
             key: bincode_util::serialize_little(&key).unwrap(),
@@ -158,18 +125,18 @@ impl TxRow {
 }
 
 #[derive(Serialize, Deserialize)]
-struct TxConfKey {
-    code: u8,
-    txid: FullHash,
-    blockhash: FullHash,
+pub struct TxConfKey {
+    pub code: u8,
+    pub txid: FullHash,
+    pub blockhash: FullHash,
 }
 
-struct TxConfRow {
-    key: TxConfKey,
+pub struct TxConfRow {
+    pub key: TxConfKey,
 }
 
 impl TxConfRow {
-    fn new(txn: &Transaction, blockhash: FullHash) -> TxConfRow {
+    pub fn new(txn: &Transaction, blockhash: FullHash) -> TxConfRow {
         let txid = full_hash(&txn.compute_txid()[..]);
         TxConfRow {
             key: TxConfKey {
@@ -180,18 +147,18 @@ impl TxConfRow {
         }
     }
 
-    fn filter(prefix: &[u8]) -> Bytes {
+    pub fn filter(prefix: &[u8]) -> Bytes {
         [b"C", prefix].concat()
     }
 
-    fn into_row(self) -> DBRow {
+    pub fn into_row(self) -> DBRow {
         DBRow {
             key: bincode_util::serialize_little(&self.key).unwrap(),
             value: vec![],
         }
     }
 
-    fn from_row(row: DBRow) -> Self {
+    pub fn from_row(row: DBRow) -> Self {
         TxConfRow {
             key: bincode_util::deserialize_little(&row.key).expect("failed to parse TxConfKey"),
         }
@@ -199,19 +166,19 @@ impl TxConfRow {
 }
 
 #[derive(Serialize, Deserialize)]
-struct TxOutKey {
+pub struct TxOutKey {
     code: u8,
     txid: FullHash,
     vout: u32,
 }
 
-struct TxOutRow {
+pub struct TxOutRow {
     key: TxOutKey,
     value: Bytes, // serialized output
 }
 
 impl TxOutRow {
-    fn new(txid: &FullHash, vout: usize, txout: &TxOut) -> TxOutRow {
+    pub fn new(txid: &FullHash, vout: usize, txout: &TxOut) -> TxOutRow {
         TxOutRow {
             key: TxOutKey {
                 code: b'O',
@@ -221,7 +188,7 @@ impl TxOutRow {
             value: serialize(txout),
         }
     }
-    fn key(outpoint: &OutPoint) -> Bytes {
+    pub fn key(outpoint: &OutPoint) -> Bytes {
         bincode_util::serialize_little(&TxOutKey {
             code: b'O',
             txid: full_hash(&outpoint.txid[..]),
@@ -230,7 +197,7 @@ impl TxOutRow {
         .unwrap()
     }
 
-    fn into_row(self) -> DBRow {
+    pub fn into_row(self) -> DBRow {
         DBRow {
             key: bincode_util::serialize_little(&self.key).unwrap(),
             value: self.value,
@@ -240,17 +207,17 @@ impl TxOutRow {
 
 #[derive(Serialize, Deserialize)]
 pub struct BlockKey {
-    code: u8,
-    hash: FullHash,
+    pub code: u8,
+    pub hash: FullHash,
 }
 
 pub struct BlockRow {
-    key: BlockKey,
-    value: Bytes, // serialized output
+    pub key: BlockKey,
+    pub value: Bytes, // serialized output
 }
 
 impl BlockRow {
-    fn new_header(block_entry: &BlockEntry) -> BlockRow {
+    pub fn new_header(block_entry: &BlockEntry) -> BlockRow {
         BlockRow {
             key: BlockKey {
                 code: b'B',
@@ -260,28 +227,28 @@ impl BlockRow {
         }
     }
 
-    fn new_txids(hash: FullHash, txids: &[Txid]) -> BlockRow {
+    pub fn new_txids(hash: FullHash, txids: &[Txid]) -> BlockRow {
         BlockRow {
             key: BlockKey { code: b'X', hash },
             value: bincode_util::serialize_little(txids).unwrap(),
         }
     }
 
-    fn new_meta(hash: FullHash, meta: &BlockMeta) -> BlockRow {
+    pub fn new_meta(hash: FullHash, meta: &BlockMeta) -> BlockRow {
         BlockRow {
             key: BlockKey { code: b'M', hash },
             value: bincode_util::serialize_little(meta).unwrap(),
         }
     }
 
-    fn new_done(hash: FullHash) -> BlockRow {
+    pub fn new_done(hash: FullHash) -> BlockRow {
         BlockRow {
             key: BlockKey { code: b'D', hash },
             value: vec![],
         }
     }
 
-    fn header_filter() -> Bytes {
+    pub fn header_filter() -> Bytes {
         b"B".to_vec()
     }
 
@@ -380,7 +347,7 @@ pub struct TxHistoryRow {
 }
 
 impl TxHistoryRow {
-    fn new(
+    pub fn new(
         script: &ScriptBuf,
         confirmed_height: u32,
         tx_position: u16,
@@ -396,20 +363,20 @@ impl TxHistoryRow {
         TxHistoryRow { key }
     }
 
-    fn filter(code: u8, hash_prefix: &[u8]) -> Bytes {
+    pub fn filter(code: u8, hash_prefix: &[u8]) -> Bytes {
         [&[code], hash_prefix].concat()
     }
 
-    fn prefix_end(code: u8, hash: &[u8]) -> Bytes {
+    pub fn prefix_end(code: u8, hash: &[u8]) -> Bytes {
         bincode_util::serialize_big(&(code, full_hash(hash), u32::MAX)).unwrap()
     }
 
-    fn prefix_height(code: u8, hash: &[u8], height: u32) -> Bytes {
+    pub fn prefix_height(code: u8, hash: &[u8], height: u32) -> Bytes {
         bincode_util::serialize_big(&(code, full_hash(hash), height)).unwrap()
     }
 
     // prefix representing the end of a given block (used for reverse scans)
-    fn prefix_height_end(code: u8, hash: &[u8], height: u32) -> Bytes {
+    pub fn prefix_height_end(code: u8, hash: &[u8], height: u32) -> Bytes {
         // u16::MAX for the tx_position ensures we get all transactions at this height
         bincode_util::serialize_big(&(code, full_hash(hash), height, u16::MAX)).unwrap()
     }
@@ -430,7 +397,7 @@ impl TxHistoryRow {
     pub fn get_txid(&self) -> Txid {
         self.key.txinfo.get_txid()
     }
-    fn get_funded_outpoint(&self) -> OutPoint {
+    pub fn get_funded_outpoint(&self) -> OutPoint {
         self.key.txinfo.get_funded_outpoint()
     }
 }
@@ -459,28 +426,28 @@ impl TxHistoryInfo {
 
 #[derive(Serialize, Deserialize)]
 pub struct TxHistorySummary {
-    txid: Txid,
-    height: usize,
-    value: i64,
-    time: u32,
-    tx_position: u16,
+    pub txid: Txid,
+    pub height: usize,
+    pub value: i64,
+    pub time: u32,
+    pub tx_position: u16,
 }
 
 #[derive(Serialize, Deserialize)]
-struct TxEdgeKey {
-    code: u8,
-    funding_txid: FullHash,
-    funding_vout: u32,
-    spending_txid: FullHash,
-    spending_vin: u32,
+pub struct TxEdgeKey {
+    pub code: u8,
+    pub funding_txid: FullHash,
+    pub funding_vout: u32,
+    pub spending_txid: FullHash,
+    pub spending_vin: u32,
 }
 
-struct TxEdgeRow {
-    key: TxEdgeKey,
+pub struct TxEdgeRow {
+    pub key: TxEdgeKey,
 }
 
 impl TxEdgeRow {
-    fn new(
+    pub fn new(
         funding_txid: FullHash,
         funding_vout: u32,
         spending_txid: FullHash,
@@ -496,20 +463,20 @@ impl TxEdgeRow {
         TxEdgeRow { key }
     }
 
-    fn filter(outpoint: &OutPoint) -> Bytes {
+    pub fn filter(outpoint: &OutPoint) -> Bytes {
         // TODO build key without using bincode? [ b"S", &outpoint.txid[..], outpoint.vout?? ].concat()
         bincode_util::serialize_little(&(b'S', full_hash(&outpoint.txid[..]), outpoint.vout))
             .unwrap()
     }
 
-    fn into_row(self) -> DBRow {
+    pub fn into_row(self) -> DBRow {
         DBRow {
             key: bincode_util::serialize_little(&self.key).unwrap(),
             value: vec![],
         }
     }
 
-    fn from_row(row: DBRow) -> Self {
+    pub fn from_row(row: DBRow) -> Self {
         TxEdgeRow {
             key: bincode_util::deserialize_little(&row.key)
                 .expect("failed to deserialize TxEdgeKey"),
@@ -518,18 +485,18 @@ impl TxEdgeRow {
 }
 
 #[derive(Serialize, Deserialize)]
-struct ScriptCacheKey {
+pub struct ScriptCacheKey {
     code: u8,
     scripthash: FullHash,
 }
 
-struct StatsCacheRow {
+pub struct StatsCacheRow {
     key: ScriptCacheKey,
     value: Bytes,
 }
 
 impl StatsCacheRow {
-    fn new(scripthash: &[u8], stats: &ScriptStats, blockhash: &BlockHash) -> Self {
+    pub fn new(scripthash: &[u8], stats: &ScriptStats, blockhash: &BlockHash) -> Self {
         StatsCacheRow {
             key: ScriptCacheKey {
                 code: b'A',
@@ -543,7 +510,7 @@ impl StatsCacheRow {
         [b"A", scripthash].concat()
     }
 
-    fn into_row(self) -> DBRow {
+    pub fn into_row(self) -> DBRow {
         DBRow {
             key: bincode_util::serialize_little(&self.key).unwrap(),
             value: self.value,
@@ -551,15 +518,15 @@ impl StatsCacheRow {
     }
 }
 
-type CachedUtxoMap = HashMap<(Txid, u32), (u32, Value)>; // (txid,vout) => (block_height,output_value)
+pub type CachedUtxoMap = HashMap<(Txid, u32), (u32, Value)>; // (txid,vout) => (block_height,output_value)
 
-struct UtxoCacheRow {
+pub struct UtxoCacheRow {
     key: ScriptCacheKey,
     value: Bytes,
 }
 
 impl UtxoCacheRow {
-    fn new(scripthash: &[u8], utxos: &UtxoMap, blockhash: &BlockHash) -> Self {
+    pub fn new(scripthash: &[u8], utxos: &UtxoMap, blockhash: &BlockHash) -> Self {
         let utxos_cache = make_utxo_cache(utxos);
 
         UtxoCacheRow {
@@ -575,7 +542,7 @@ impl UtxoCacheRow {
         [b"U", scripthash].concat()
     }
 
-    fn into_row(self) -> DBRow {
+    pub fn into_row(self) -> DBRow {
         DBRow {
             key: bincode_util::serialize_little(&self.key).unwrap(),
             value: self.value,
@@ -585,7 +552,7 @@ impl UtxoCacheRow {
 
 // keep utxo cache with just the block height (the hash/timestamp are read later from the headers to reconstruct BlockId)
 // and use a (txid,vout) tuple instead of OutPoints (they don't play nicely with bincode serialization)
-fn make_utxo_cache(utxos: &UtxoMap) -> CachedUtxoMap {
+pub fn make_utxo_cache(utxos: &UtxoMap) -> CachedUtxoMap {
     utxos
         .iter()
         .map(|(outpoint, (blockid, value))| {
@@ -593,19 +560,6 @@ fn make_utxo_cache(utxos: &UtxoMap) -> CachedUtxoMap {
                 (outpoint.txid, outpoint.vout),
                 (blockid.height as u32, *value),
             )
-        })
-        .collect()
-}
-
-fn from_utxo_cache(utxos_cache: CachedUtxoMap, chain: &ChainQuery) -> UtxoMap {
-    utxos_cache
-        .into_iter()
-        .map(|((txid, vout), (height, value))| {
-            let outpoint = OutPoint { txid, vout };
-            let blockid = chain
-                .blockid_by_height(height as usize)
-                .expect("missing blockheader for valid utxo cache entry");
-            (outpoint, (blockid, value))
         })
         .collect()
 }
@@ -632,7 +586,7 @@ mod tests {
     use std::convert::TryInto;
 
     #[test]
-    fn tx_history_row_ser_deser_tests() {
+    pub fn tx_history_row_ser_deser_tests() {
         #[rustfmt::skip]
         let inputs = [
             vec![
