@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use super::schema::lookup_txo;
 use super::{BlockEntry, Store, TxVaultInfo, TxVaultKey, TxVaultRow};
 use crate::chain::{Network, Transaction};
+use crate::new_index::lookup_txo;
 use crate::util::ScriptToAddr;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, ScriptBuf, TxIn, TxOut};
@@ -35,7 +35,6 @@ impl VaultIndexer {
             .par_iter() // serialization is CPU-intensive
             .map(|b| {
                 let mut rows = vec![];
-                let mut vault_txes = vec![];
                 for (idx, tx) in b.block.txdata.iter().enumerate() {
                     let height = b.entry.height() as u32;
                     let block_timestamp = b.entry.header().time;
@@ -46,34 +45,18 @@ impl VaultIndexer {
                         idx as u32,
                         block_timestamp,
                     ) {
-                        vault_txes.push(tx);
                         rows.push(vault_row);
                     }
                 }
-                super::merkletree::build_trie_db(b, vault_txes.as_slice());
                 rows
             })
             .flatten()
             .collect();
 
         if !vault_rows.is_empty() {
-            //Reorder the rows by height and tx_position
-            //vault_rows.par_sort_by_key(|row| (row.info.confirmed_height, row.info.tx_position));
             let dbrows = vault_rows.into_iter().map(|tx| tx.into_row()).collect();
             let vault_store = self.store.vault_store();
             vault_store.flush_vault_tx(dbrows);
-            // Check insert order
-            // let mut iter = vault_store.vault_txs().raw_iterator();
-            // iter.seek_to_first();
-            // while iter.valid() {
-            //     let Some(value) = iter.value() else {
-            //         break;
-            //     };
-            //     if let Ok(tx_vault) = TxVaultInfo::try_from(&value) {
-            //         debug!("tx_vault: {:?}", tx_vault);
-            //     };
-            //     iter.next();
-            // }
         }
     }
     fn index_transaction(

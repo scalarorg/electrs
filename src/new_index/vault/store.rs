@@ -10,20 +10,24 @@ const HASH_LEN: usize = 32;
 
 pub struct VaultStore {
     vault_txs: DB, //Store map TxVaultKey to TxVaultInfo
-                   // vault_headers: DB, //Store map BlockHeight to list of tx positions if has any
+    // vault_headers: DB, //Store map BlockHeight to list of tx positions if has any
+    vault_merkle_tree: DB,
 }
 impl VaultStore {
     pub fn open(path: &Path, config: &Config) -> Self {
         let vault_txs = DB::open(&path.join("vaulttxs"), config);
-        // let vault_headers = DB::open(&path.join("vaultheader"), config);
-        Self { vault_txs }
+        let vault_merkle_tree = DB::open(&path.join("vaultmerkletree"), config);
+        Self {
+            vault_txs,
+            vault_merkle_tree,
+        }
     }
     pub fn vault_txs(&self) -> &DB {
         &self.vault_txs
     }
-    // pub fn vault_headers(&self) -> &DB {
-    //     &self.vault_headers
-    // }
+    pub fn vault_merkle_tree(&self) -> &DB {
+        &self.vault_merkle_tree
+    }
     pub fn flush_vault_tx(&self, vault_rows: Vec<DBRow>) {
         self.vault_txs.write(vault_rows, DBFlush::Enable);
     }

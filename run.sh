@@ -17,9 +17,9 @@ testnet4() {
     export ELECTRUM_RPC_ADDR="0.0.0.0:60001"
     export DB_FOLDER=./electrs
     # Index from genesis
-    export START_HEIGHT=86849
+    export START_HEIGHT=0
     # stop height it not working yet
-    # export STOP_HEIGHT=86850
+    # export STOP_HEIGHT=86846
     export FETCH_SIZE=64
     export TAG=SCALAR
     export VERSION=1

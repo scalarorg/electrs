@@ -18,7 +18,7 @@ use crate::daemon::Daemon;
 use crate::errors::*;
 use crate::metrics::{GaugeVec, HistogramOpts, HistogramVec, MetricOpts, Metrics};
 use crate::new_index::{
-    compute_script_hash, schema::FullHash, ChainQuery, FundingInfo, ScriptStats, SpendingInfo,
+    compute_script_hash, ChainQuery, FullHash, FundingInfo, ScriptStats, SpendingInfo,
     SpendingInput, TxHistoryInfo, Utxo,
 };
 use crate::util::fees::{make_fee_histogram, TxFeeInfo};

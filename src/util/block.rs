@@ -64,6 +64,7 @@ impl fmt::Debug for HeaderEntry {
     }
 }
 
+#[derive(Debug)]
 pub struct HeaderList {
     headers: Vec<HeaderEntry>,
     heights: HashMap<BlockHash, usize>,

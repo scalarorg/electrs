@@ -27,6 +27,9 @@ pub fn start_fetcher(
     daemon: &Daemon,
     new_headers: Vec<HeaderEntry>,
 ) -> Result<Fetcher<Vec<BlockEntry>>> {
+    println!("headeres.len: {:?}", new_headers.len());
+    println!("headers[0]: {:?}", new_headers[0]);
+    println!("headers[n-1]: {:?}", new_headers[new_headers.len() - 1]);
     let fetcher = match from {
         FetchFrom::Bitcoind => bitcoind_fetcher,
         FetchFrom::BlkFiles => blkfiles_fetcher,

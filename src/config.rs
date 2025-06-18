@@ -376,8 +376,6 @@ impl Config {
             std::process::exit(0);
         }
 
-        println!("matches: {:?}", m);
-
         let network_name = m.value_of("network").unwrap_or("mainnet");
         let network_type = Network::from(network_name);
         let magic: Option<Magic> = m

@@ -1,15 +1,19 @@
-pub mod db;
+mod chain_query;
+mod db;
 mod fetch;
 mod mempool;
-pub mod precache;
+mod precache;
 mod query;
-pub mod schema;
-pub mod vault;
-pub use self::db::{DBRow, DB};
-pub use self::fetch::{BlockEntry, FetchFrom};
-pub use self::mempool::Mempool;
-pub use self::query::Query;
-pub use self::schema::{
-    compute_script_hash, parse_hash, ChainQuery, FundingInfo, Indexer, ScriptStats, SpendingInfo,
-    SpendingInput, Store, TxHistoryInfo, TxHistoryKey, TxHistoryRow, Utxo,
-};
+mod root;
+mod schema;
+mod store;
+mod vault;
+
+pub use chain_query::*;
+pub use db::*;
+pub use fetch::*;
+pub use mempool::*;
+pub use query::*;
+pub use root::*;
+pub use schema::*;
+pub use store::*;
