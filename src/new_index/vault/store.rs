@@ -8,17 +8,26 @@ use crate::new_index::DBFlush;
 
 const HASH_LEN: usize = 32;
 
+pub enum DBType {
+    Tx,
+    MerklePath,
+    MerkleTree,
+}
+
 pub struct VaultStore {
-    vault_txs: DB, //Store map TxVaultKey to TxVaultInfo
-    // vault_headers: DB, //Store map BlockHeight to list of tx positions if has any
+    vault_txs: DB,
+    vault_merkle_path: DB,
     vault_merkle_tree: DB,
 }
+
 impl VaultStore {
     pub fn open(path: &Path, config: &Config) -> Self {
         let vault_txs = DB::open(&path.join("vaulttxs"), config);
+        let vault_merkle_path = DB::open(&path.join("vaultmerklepath"), config);
         let vault_merkle_tree = DB::open(&path.join("vaultmerkletree"), config);
         Self {
             vault_txs,
+            vault_merkle_path,
             vault_merkle_tree,
         }
     }
@@ -26,11 +35,17 @@ impl VaultStore {
         &self.vault_txs
     }
     pub fn vault_merkle_tree(&self) -> &DB {
-        &self.vault_merkle_tree
+        &self.vault_merkle_path
     }
-    pub fn flush_vault_tx(&self, vault_rows: Vec<DBRow>) {
-        self.vault_txs.write(vault_rows, DBFlush::Enable);
+    
+    pub fn flush(&self, db_type: DBType, vault_rows: Vec<DBRow>) {
+        match db_type {
+            DBType::Tx => self.vault_txs.write(vault_rows, DBFlush::Enable),
+            DBType::MerklePath => self.vault_merkle_path.write(vault_rows, DBFlush::Enable),
+            DBType::MerkleTree => self.vault_merkle_tree.write(vault_rows, DBFlush::Enable),
+        }
     }
+
     pub fn get_vault_info(&self, key: &TxVaultKey) -> Result<TxVaultInfo> {
         let key = key.as_bytes();
         let value = self
