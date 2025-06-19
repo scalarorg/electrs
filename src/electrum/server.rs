@@ -32,9 +32,7 @@ use crate::config::{Config, VERSION_STRING};
 use crate::electrum::{get_electrum_height, ProtocolVersion};
 use crate::errors::*;
 use crate::metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
-use crate::new_index::vault::{
-    BlockVaultRow, TxVaultInfo, TxVaultRow, VaultBlockValue, VaultTxValue,
-};
+use crate::new_index::vault::{BlockVaultRow, VaultBlockValue, VaultTxValue};
 use crate::new_index::{Query, Utxo};
 use crate::util::electrum_merkle::{get_header_merkle_proof, get_id_from_pos, get_tx_merkle_proof};
 use crate::util::{
@@ -51,8 +49,8 @@ use crate::electrum::{DiscoveryManager, ServerFeatures};
 use super::vault::VaultServer;
 
 const METHOD_VAULT_BLOCKS_SUBSCRIBE: &str = "vault.blocks.subscribe";
-const METHOD_VAULT_TRANSACTIONS_SUBSCRIBE: &str = "vault.transactions.subscribe";
-const METHOD_VAULT_TRANSACTIONS_GET: &str = "vault.transactions.get";
+//const METHOD_VAULT_TRANSACTIONS_SUBSCRIBE: &str = "vault.transactions.subscribe";
+//const METHOD_VAULT_TRANSACTIONS_GET: &str = "vault.transactions.get";
 
 // TODO: Sha256dHash should be a generic hash-container (since script hash is single SHA256)
 fn hash_from_value(val: Option<&Value>) -> Result<Sha256dHash> {
@@ -115,10 +113,8 @@ struct Connection {
     query: Arc<Query>,
     last_header_entry: Option<HeaderEntry>,
     //Store last vault key for subscription
-    last_vault_entry: Option<TxVaultRow>,
     last_vault_block: Option<BlockHash>,
     vault_block_batch_size: usize,
-    last_vault_batch_size: usize,
     status_hashes: HashMap<Sha256dHash, Value>, // ScriptHash -> StatusHash
     stream: ConnectionStream,
     chan: SyncChannel<Message>,
@@ -144,10 +140,8 @@ impl Connection {
         Connection {
             query,
             last_header_entry: None, // disable header subscription for now
-            last_vault_entry: None,  // disable vault subscription for now
             last_vault_block: None,  // disable vault block subscription for now
             vault_block_batch_size: 1,
-            last_vault_batch_size: 1,
             status_hashes: HashMap::new(),
             stream,
             chan: SyncChannel::new(10),
