@@ -22,7 +22,7 @@ testnet4() {
     # export STOP_HEIGHT=52650
     export FETCH_SIZE=64
     export TAG=SCALAR
-    export VERSION=1
+    export VERSION=3
     $DIR/start.scalar.sh testnet4
 }
 

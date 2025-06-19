@@ -42,6 +42,10 @@ impl VaultStore {
         batch_size: usize,
         last_block_hash: Option<BlockHash>,
     ) -> Result<Vec<BlockVaultRow>> {
+        debug!(
+            "Get vault block with batch size: {:?} from hash: {:?}",
+            batch_size, last_block_hash
+        );
         let last_key = last_block_hash.and_then(|v| {
             hex::decode(v)
                 .map_err(|e| Error::from(e.to_string()))

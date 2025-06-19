@@ -494,7 +494,7 @@ impl Connection {
         } else {
             self.last_vault_block = vault_blocks.iter().last().map(|v| v.hash.clone());
         }
-        let block_values = self.create_vault_block_values(vault_blocks)?;
+        let block_values = self.create_vault_block_values(vault_blocks, false)?;
         Ok(Value::Array(block_values))
     }
     fn handle_command(&mut self, method: &str, params: &[Value], id: &Value) -> Result<Value> {
@@ -593,7 +593,11 @@ impl Connection {
         Ok(result)
     }
 
-    fn create_vault_block_values(&self, vault_blocks: Vec<BlockVaultRow>) -> Result<Vec<Value>> {
+    fn create_vault_block_values(
+        &self,
+        vault_blocks: Vec<BlockVaultRow>,
+        with_metadata: bool,
+    ) -> Result<Vec<Value>> {
         let mut result = vec![];
         for vault_block in vault_blocks {
             let BlockVaultRow {
@@ -603,6 +607,7 @@ impl Connection {
             } = vault_block;
             let mut block_value = VaultBlockValue {
                 hash: hash,
+                height: height,
                 txes: vec![],
             };
             for tx_info in tx_infos {
@@ -618,10 +623,14 @@ impl Connection {
                     proof: merkle,
                 });
             }
-            result.push(json!({
+            if with_metadata {
+                result.push(json!({
                         "jsonrpc": "2.0",
-                        "method": METHOD_VAULT_BLOCKS_SUBSCRIBE,
-                        "params": Value::from(&block_value)}));
+                            "method": METHOD_VAULT_BLOCKS_SUBSCRIBE,
+                            "params": Value::from(&block_value)}));
+            } else {
+                result.push(Value::from(&block_value));
+            }
         }
         Ok(result)
     }
@@ -634,7 +643,8 @@ impl Connection {
 
         if !vault_blocks.is_empty() {
             self.last_vault_block = vault_blocks.iter().last().map(|v| v.hash.clone());
-            let vault_block_values = self.create_vault_block_values(vault_blocks)?;
+            info!("Found {} vault blocks", vault_blocks.len());
+            let vault_block_values = self.create_vault_block_values(vault_blocks, true)?;
             result.extend(vault_block_values);
         }
         Ok(result)

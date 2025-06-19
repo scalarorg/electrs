@@ -270,6 +270,7 @@ pub struct VaultTxValue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultBlockValue {
     pub hash: BlockHash,
+    pub height: usize,
     pub txes: Vec<VaultTxValue>,
 }
 
