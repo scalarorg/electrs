@@ -9,7 +9,7 @@ testnet3() {
     export DAEMON_CONF_PATH=$DIR/testnet3.env
     export START_HEIGHT=3193400
     export STOP_HEIGHT=3193600
-    $DIR/start testnet
+    $DIR/start.sh testnet
 }
 testnet4() {
     export DAEMON_RPC_ADDR="127.0.0.1:48332"
@@ -23,7 +23,7 @@ testnet4() {
     export FETCH_SIZE=64
     export TAG=SCALAR
     export VERSION=1
-    $DIR/start.scalar testnet4
+    $DIR/start.scalar.sh testnet4
 }
 
 regtest() {
@@ -36,6 +36,6 @@ regtest() {
     export START_HEIGHT=0
     export VAULT_TAG="01020304"
     export VAULT_VERSION=0
-    $DIR/start.scalar regtest
+    $DIR/start.scalar.sh regtest
 }
 $@

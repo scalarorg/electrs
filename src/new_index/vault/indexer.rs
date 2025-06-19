@@ -3,6 +3,8 @@ use std::sync::Arc;
 use super::schema::lookup_txo;
 use super::{BlockEntry, Store, TxVaultInfo, TxVaultKey, TxVaultRow};
 use crate::chain::{Network, Transaction};
+use crate::new_index::vault::model::{BlockVaultRow, BlockVaultTxs};
+use crate::new_index::vault::VaultTxHeader;
 use crate::util::ScriptToAddr;
 use bitcoin::hashes::Hash;
 use bitcoin::{OutPoint, ScriptBuf, TxIn, TxOut};
@@ -29,13 +31,64 @@ impl VaultIndexer {
             store,
         }
     }
-
+    pub fn index_block_vault(&self, block_entries: &[BlockEntry]) {
+        let block_vaults = block_entries
+            .iter()
+            .map(|block_entry| {
+                let mut block_vault_row = BlockVaultTxs::new(block_entry.entry.hash().clone());
+                for (idx, tx) in block_entry.block.txdata.iter().enumerate() {
+                    let height = block_entry.entry.height();
+                    let block_timestamp = block_entry.entry.header().time;
+                    if let Ok(vault_row) = self.index_transaction(
+                        tx,
+                        height as u32,
+                        hex::encode(block_entry.entry.hash().as_byte_array()),
+                        idx as u32,
+                        block_timestamp,
+                    ) {
+                        block_vault_row.add_tx(vault_row);
+                    }
+                }
+                block_vault_row
+            })
+            .collect::<Vec<BlockVaultTxs>>();
+        let mut vault_rows = vec![];
+        let mut block_rows = vec![];
+        for block_vault in block_vaults {
+            let BlockVaultTxs { hash, vault_txs } = block_vault;
+            let block_vault_row = BlockVaultRow {
+                height: 0,
+                hash,
+                tx_headers: vault_txs
+                    .iter()
+                    .map(|tx| VaultTxHeader {
+                        txid: tx.key.txid,
+                        sender_address: tx.info.staker_address.clone(),
+                        sender_pubkey: tx.info.staker_pubkey.clone(),
+                        pos: tx.info.tx_position,
+                    })
+                    .collect(),
+            };
+            vault_rows.extend(vault_txs.into_iter().map(|tx| tx.into_row()));
+            if block_vault_row.tx_headers.len() > 0 {
+                info!(
+                    "Found vault block at height: {:?} with hash: {:?}, number of txs: {:?}",
+                    block_vault_row.height,
+                    block_vault_row.hash,
+                    block_vault_row.tx_headers.len()
+                );
+                block_rows.push(block_vault_row.into_row());
+            }
+        }
+        let vault_store = self.store.vault_store();
+        vault_store.flush_vault_tx(vault_rows);
+        vault_store.flush_vault_blocks(block_rows);
+    }
     pub fn index_blocks(&self, block_entries: &[BlockEntry]) {
         let vault_rows: Vec<TxVaultRow> = block_entries
             .par_iter() // serialization is CPU-intensive
             .map(|b| {
                 let mut rows = vec![];
-                let mut vault_txes = vec![];
                 for (idx, tx) in b.block.txdata.iter().enumerate() {
                     let height = b.entry.height() as u32;
                     let block_timestamp = b.entry.header().time;
@@ -46,11 +99,10 @@ impl VaultIndexer {
                         idx as u32,
                         block_timestamp,
                     ) {
-                        vault_txes.push(tx);
                         rows.push(vault_row);
                     }
                 }
-                super::merkletree::build_trie_db(b, vault_txes.as_slice());
+                //super::merkletree::build_trie_db(b, vault_txes.as_slice());
                 rows
             })
             .flatten()
@@ -62,18 +114,6 @@ impl VaultIndexer {
             let dbrows = vault_rows.into_iter().map(|tx| tx.into_row()).collect();
             let vault_store = self.store.vault_store();
             vault_store.flush_vault_tx(dbrows);
-            // Check insert order
-            // let mut iter = vault_store.vault_txs().raw_iterator();
-            // iter.seek_to_first();
-            // while iter.valid() {
-            //     let Some(value) = iter.value() else {
-            //         break;
-            //     };
-            //     if let Ok(tx_vault) = TxVaultInfo::try_from(&value) {
-            //         debug!("tx_vault: {:?}", tx_vault);
-            //     };
-            //     iter.next();
-            // }
         }
     }
     fn index_transaction(

@@ -1,8 +1,9 @@
 use super::DBRow;
+use crate::chain::BlockHash;
 use crate::errors::*;
 use crate::util::{bincode_util, full_hash, Bytes};
 use bitcoin::consensus::Encodable;
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{sha256d, Hash};
 use bitcoin::Txid;
 use bitcoin_vault::{
     types::{VaultChangeTxOutput, VaultReturnTxOutputType, VaultTransaction},
@@ -222,6 +223,92 @@ impl From<VaultTransaction> for TxVaultInfo {
     }
 }
 
+pub struct BlockVaultTxs {
+    pub hash: BlockHash,
+    pub vault_txs: Vec<TxVaultRow>,
+}
+impl BlockVaultTxs {
+    pub fn new(hash: BlockHash) -> Self {
+        Self {
+            hash,
+            vault_txs: vec![],
+        }
+    }
+    pub fn add_tx(&mut self, tx: TxVaultRow) {
+        self.vault_txs.push(tx);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultTxHeader {
+    pub txid: Txid,
+    pub pos: u32,
+    pub sender_address: Option<String>,
+    pub sender_pubkey: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockVaultRow {
+    pub height: usize,
+    pub hash: BlockHash,
+    pub tx_headers: Vec<VaultTxHeader>,
+}
+impl BlockVaultRow {
+    pub fn into_row(self) -> DBRow {
+        DBRow {
+            key: self.hash.as_byte_array().to_vec(),
+            value: bincode_util::serialize_big(&self).unwrap(),
+        }
+    }
+
+    pub fn from_row(row: DBRow) -> Self {
+        let block_vault_row =
+            bincode_util::deserialize_big(&row.value).expect("failed to deserialize BlockVaultRow");
+        block_vault_row
+    }
+    pub fn try_from_bytes(_key: &[u8], value: &[u8]) -> Result<Self> {
+        // let _hash = BlockHash::from_slice(_key).unwrap();
+        let block_vault_row =
+            bincode_util::deserialize_big(value).expect("failed to deserialize BlockVaultRow");
+        Ok(block_vault_row)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultTxValue {
+    pub raw_tx: Vec<u8>,
+    pub txid: Txid,
+    pub sender_address: Option<String>,
+    pub sender_pubkey: Option<String>,
+    pub pos: u32,
+    pub proof: Vec<sha256d::Hash>,
+}
+impl From<&VaultTxValue> for Value {
+    fn from(value: &VaultTxValue) -> Self {
+        json!(value)
+        // json!({
+        //     "raw_tx": value.raw_tx,
+        //     "txid": value.txid,
+        //     "sender": value.sender,
+        //     "pos": value.pos,
+        //     "proof": value.proof,
+        // })
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultBlockValue {
+    pub hash: BlockHash,
+    pub txes: Vec<VaultTxValue>,
+}
+
+impl From<&VaultBlockValue> for Value {
+    fn from(value: &VaultBlockValue) -> Self {
+        json!({
+            "hash": value.hash,
+            "txes": value.txes.iter().map(|tx| tx.into()).collect::<Vec<Value>>(),
+        })
+    }
+}
 #[cfg(test)]
 mod tests {
     use bitcoin::consensus::Decodable;
