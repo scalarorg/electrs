@@ -14,6 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
+use bitcoin::hashes::Hash as _;
+use bitcoin::BlockHash;
 use error_chain::ChainedError;
 use hex;
 use hex::ToHex as _;
@@ -30,7 +32,9 @@ use crate::config::{Config, VERSION_STRING};
 use crate::electrum::{get_electrum_height, ProtocolVersion};
 use crate::errors::*;
 use crate::metrics::{Gauge, HistogramOpts, HistogramVec, MetricOpts, Metrics};
-use crate::new_index::vault::TxVaultRow;
+use crate::new_index::vault::{
+    BlockVaultRow, TxVaultInfo, TxVaultRow, VaultBlockValue, VaultTxValue,
+};
 use crate::new_index::{Query, Utxo};
 use crate::util::electrum_merkle::{get_header_merkle_proof, get_id_from_pos, get_tx_merkle_proof};
 use crate::util::{
@@ -45,6 +49,10 @@ const MAX_HEADERS: usize = 2016;
 use crate::electrum::{DiscoveryManager, ServerFeatures};
 
 use super::vault::VaultServer;
+
+const METHOD_VAULT_BLOCKS_SUBSCRIBE: &str = "vault.blocks.subscribe";
+const METHOD_VAULT_TRANSACTIONS_SUBSCRIBE: &str = "vault.transactions.subscribe";
+const METHOD_VAULT_TRANSACTIONS_GET: &str = "vault.transactions.get";
 
 // TODO: Sha256dHash should be a generic hash-container (since script hash is single SHA256)
 fn hash_from_value(val: Option<&Value>) -> Result<Sha256dHash> {
@@ -108,6 +116,8 @@ struct Connection {
     last_header_entry: Option<HeaderEntry>,
     //Store last vault key for subscription
     last_vault_entry: Option<TxVaultRow>,
+    last_vault_block: Option<BlockHash>,
+    vault_block_batch_size: usize,
     last_vault_batch_size: usize,
     status_hashes: HashMap<Sha256dHash, Value>, // ScriptHash -> StatusHash
     stream: ConnectionStream,
@@ -135,6 +145,8 @@ impl Connection {
             query,
             last_header_entry: None, // disable header subscription for now
             last_vault_entry: None,  // disable vault subscription for now
+            last_vault_block: None,  // disable vault block subscription for now
+            vault_block_batch_size: 1,
             last_vault_batch_size: 1,
             status_hashes: HashMap::new(),
             stream,
@@ -431,35 +443,59 @@ impl Connection {
             "tx_hash": txid,
             "merkle" : merkle}))
     }
-    fn find_vault_transactions(&mut self, params: &[Value]) -> Result<(usize, Vec<TxVaultRow>)> {
+    // fn find_vault_transactions(&mut self, params: &[Value]) -> Result<(usize, Vec<TxVaultRow>)> {
+    //     let batch_size = params.first().and_then(|value| value.as_u64()).unwrap_or(1) as usize;
+    //     let hash = params.get(1).and_then(|value| value.as_str());
+    //     trace!(
+    //         "Handle find_vault_transactions request with params {:?}: hash {:?}",
+    //         &params,
+    //         &hash
+    //     );
+    //     let transactions = self.vault.get_transactions_from_hash(batch_size, hash)?;
+    //     Ok((batch_size, transactions))
+    // }
+    // fn vault_transactions_get(&mut self, params: &[Value]) -> Result<Value> {
+    //     //Get latest vault transaction form storage
+    //     let (_, transactions) = self.find_vault_transactions(params)?;
+    //     let result = Value::Array(transactions.iter().map(|v| Value::from(v)).collect());
+    //     Ok(result)
+    // }
+    // fn vault_transactions_subscribe(&mut self, params: &[Value]) -> Result<Value> {
+    //     let (batch_size, transactions) = self.find_vault_transactions(params)?;
+    //     let result = Value::Array(transactions.iter().map(|v| Value::from(v)).collect());
+    //     //Set value for periodic update
+    //     self.last_vault_batch_size = batch_size;
+    //     if transactions.is_empty() {
+    //         // Get the last vault entry from storage
+    //         self.last_vault_entry = self.vault.get_last_vault().ok().map(|v| v.into());
+    //     } else {
+    //         self.last_vault_entry = transactions.into_iter().last();
+    //     }
+    //     Ok(result)
+    // }
+    fn vault_block_subscribe(&mut self, params: &[Value]) -> Result<Value> {
         let batch_size = params.first().and_then(|value| value.as_u64()).unwrap_or(1) as usize;
         let hash = params.get(1).and_then(|value| value.as_str());
-        trace!(
-            "Handle find_vault_transactions request with params {:?}: hash {:?}",
-            &params,
-            &hash
+        info!(
+            "Handle vault_block_subscribe request with batch_size {:?} and hash {:?}",
+            &batch_size, &hash
         );
-        let transactions = self.vault.get_transactions_from_hash(batch_size, hash)?;
-        Ok((batch_size, transactions))
-    }
-    fn vault_transactions_get(&mut self, params: &[Value]) -> Result<Value> {
-        //Get latest vault transaction form storage
-        let (_, transactions) = self.find_vault_transactions(params)?;
-        let result = Value::Array(transactions.iter().map(|v| Value::from(v)).collect());
-        Ok(result)
-    }
-    fn vault_transactions_subscribe(&mut self, params: &[Value]) -> Result<Value> {
-        let (batch_size, transactions) = self.find_vault_transactions(params)?;
-        let result = Value::Array(transactions.iter().map(|v| Value::from(v)).collect());
+        let hash = hash.and_then(|v| {
+            hex::decode(v)
+                .ok()
+                .and_then(|v| BlockHash::from_slice(v.as_slice()).ok())
+        });
+        let vault_blocks = self.vault.get_vault_blocks_from_hash(batch_size, hash)?;
         //Set value for periodic update
-        self.last_vault_batch_size = batch_size;
-        if transactions.is_empty() {
+        self.vault_block_batch_size = batch_size;
+        if vault_blocks.is_empty() {
             // Get the last vault entry from storage
-            self.last_vault_entry = self.vault.get_last_vault().ok().map(|v| v.into());
+            self.last_vault_block = self.vault.get_last_vault_block_hash().ok();
         } else {
-            self.last_vault_entry = transactions.into_iter().last();
+            self.last_vault_block = vault_blocks.iter().last().map(|v| v.hash.clone());
         }
-        Ok(result)
+        let block_values = self.create_vault_block_values(vault_blocks, false)?;
+        Ok(Value::Array(block_values))
     }
     fn handle_command(&mut self, method: &str, params: &[Value], id: &Value) -> Result<Value> {
         trace!("Handle command {:?} with params {:?}", &method, &params);
@@ -495,8 +531,9 @@ impl Connection {
             #[cfg(feature = "electrum-discovery")]
             "server.add_peer" => self.server_add_peer(params),
             // For vault transactions
-            "vault.transactions.subscribe" => self.vault_transactions_subscribe(params),
-            "vault.transactions.get" => self.vault_transactions_get(params),
+            METHOD_VAULT_BLOCKS_SUBSCRIBE => self.vault_block_subscribe(params),
+            // METHOD_VAULT_TRANSACTIONS_SUBSCRIBE => self.vault_transactions_subscribe(params),
+            // METHOD_VAULT_TRANSACTIONS_GET => self.vault_transactions_get(params),
             &_ => bail!("unknown method {} {:?}", method, params),
         };
         timer.observe_duration();
@@ -535,33 +572,6 @@ impl Connection {
                     "params": [header]}));
             }
         }
-        //Scalar: Add vault subscription
-        let last_key = self.last_vault_entry.as_ref().map(|row| row.key.as_hex());
-        let last_key_str = last_key.as_ref().map(|v| v.as_str());
-        let vault_txs = self
-            .vault
-            .get_transactions_from_hash(self.last_vault_batch_size, last_key_str)
-            .unwrap_or_default();
-        if !vault_txs.is_empty() {
-            let vault_txs_len = vault_txs.len();
-            let vault_txs_result = Value::Array(vault_txs.iter().map(|v| Value::from(v)).collect());
-            self.last_vault_entry = vault_txs.into_iter().last();
-            let vault_tx = self.last_vault_entry.as_ref().unwrap();
-            debug!(
-                "Found {} vault txs. Latest vault tx at {:?}:{:?} {:?} with key {:?}",
-                vault_txs_len,
-                &vault_tx.key.height,
-                &vault_tx.key.position,
-                &vault_tx.info.txid,
-                &vault_tx.key.as_hex()
-            );
-            result.push(json!({
-                        "jsonrpc": "2.0",
-                        "method": "vault.transactions.subscribe",
-                        "params": vault_txs_result}));
-        } else {
-            debug!("Latest vault transaction not found");
-        }
 
         for (script_hash, status_hash) in self.status_hashes.iter_mut() {
             let history_txids = get_history(&self.query, &script_hash[..], self.txs_limit)?;
@@ -576,10 +586,100 @@ impl Connection {
                 "params": [script_hash, new_status_hash]}));
             *status_hash = new_status_hash;
         }
+        if let Ok(vault_blocks) = self.update_vault_block_subscription() {
+            result.extend(vault_blocks);
+        }
         timer.observe_duration();
         Ok(result)
     }
 
+    fn create_vault_block_values(
+        &self,
+        vault_blocks: Vec<BlockVaultRow>,
+        with_metadata: bool,
+    ) -> Result<Vec<Value>> {
+        let mut result = vec![];
+        for vault_block in vault_blocks {
+            let BlockVaultRow {
+                hash,
+                height,
+                tx_infos,
+            } = vault_block;
+            let mut block_value = VaultBlockValue {
+                hash: hash,
+                height: height,
+                txes: vec![],
+            };
+            for tx_info in tx_infos {
+                let (merkle, _pos) = get_tx_merkle_proof(self.query.chain(), &tx_info.txid, &hash)
+                    .chain_err(|| "cannot create merkle proof")?;
+                let tx = self
+                    .query
+                    .lookup_raw_txn(&tx_info.txid)
+                    .chain_err(|| "missing transaction")?;
+                block_value.txes.push(VaultTxValue {
+                    raw_tx: tx,
+                    tx_info: tx_info,
+                    proof: merkle,
+                });
+            }
+            if with_metadata {
+                result.push(json!({
+                        "jsonrpc": "2.0",
+                            "method": METHOD_VAULT_BLOCKS_SUBSCRIBE,
+                            "params": Value::from(&block_value)}));
+            } else {
+                result.push(Value::from(&block_value));
+            }
+        }
+        Ok(result)
+    }
+    fn update_vault_block_subscription(&mut self) -> Result<Vec<Value>> {
+        let mut result = vec![];
+        //Scalar: Add vault subscription
+        let vault_blocks = self
+            .vault
+            .get_vault_blocks_from_hash(self.vault_block_batch_size, self.last_vault_block)?;
+
+        if !vault_blocks.is_empty() {
+            self.last_vault_block = vault_blocks.iter().last().map(|v| v.hash.clone());
+            info!("Found {} vault blocks", vault_blocks.len());
+            let vault_block_values = self.create_vault_block_values(vault_blocks, true)?;
+            result.extend(vault_block_values);
+        }
+        Ok(result)
+    }
+    // fn update_vault_tx_subscription(&mut self) -> Result<Vec<Value>> {
+    //     let mut result = vec![];
+    //     //Scalar: Add vault subscription
+    //     let last_key = self.last_vault_entry.as_ref().map(|row| row.key.as_hex());
+    //     let last_key_str = last_key.as_ref().map(|v| v.as_str());
+    //     let vault_txs = self
+    //         .vault
+    //         .get_transactions_from_hash(self.last_vault_batch_size, last_key_str)
+    //         .unwrap_or_default();
+    //     if !vault_txs.is_empty() {
+    //         let vault_txs_len = vault_txs.len();
+    //         let vault_txs_result = Value::Array(vault_txs.iter().map(|v| Value::from(v)).collect());
+    //         self.last_vault_entry = vault_txs.into_iter().last();
+    //         let vault_tx = self.last_vault_entry.as_ref().unwrap();
+    //         debug!(
+    //             "Found {} vault txs. Latest vault tx at {:?}:{:?} {:?} with key {:?}",
+    //             vault_txs_len,
+    //             &vault_tx.key.height,
+    //             &vault_tx.key.position,
+    //             &vault_tx.info.txid,
+    //             &vault_tx.key.as_hex()
+    //         );
+    //         result.push(json!({
+    //                     "jsonrpc": "2.0",
+    //                     "method": METHOD_VAULT_TRANSACTIONS_SUBSCRIBE,
+    //                     "params": vault_txs_result}));
+    //     } else {
+    //         debug!("Latest vault transaction not found");
+    //     }
+    //     Ok(result)
+    // }
     fn send_values(&mut self, values: &[Value]) -> Result<()> {
         for value in values {
             let line = value.to_string() + "\n";
