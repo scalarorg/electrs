@@ -23,7 +23,7 @@ pub struct TxVaultInfo {
     pub staker_address: Option<String>,
     pub staker_pubkey: Option<String>,
     // the Hex content of the transaction
-    pub tx_content: String,
+    //pub tx_content: String,
     pub timestamp: u32,
     pub change_amount: Option<u64>,
     pub change_address: Option<String>,
@@ -168,12 +168,12 @@ impl From<VaultTransaction> for TxVaultInfo {
     fn from(vault_tx: VaultTransaction) -> Self {
         let VaultTransaction {
             txid,
-            tx_content,
             inputs,
             outputs,
             lock_tx,
             return_tx,
             change_tx,
+            ..
         } = vault_tx;
         let mut writer = vec![];
         txid.consensus_encode(&mut writer).unwrap();
@@ -206,7 +206,7 @@ impl From<VaultTransaction> for TxVaultInfo {
             },
             staker_address: None,
             staker_pubkey: None,
-            tx_content,
+            //tx_content,
             timestamp: 0,
             change_amount,
             change_address,
@@ -223,37 +223,23 @@ impl From<VaultTransaction> for TxVaultInfo {
     }
 }
 
-pub struct BlockVaultTxs {
-    pub hash: BlockHash,
-    pub vault_txs: Vec<TxVaultRow>,
-}
-impl BlockVaultTxs {
-    pub fn new(hash: BlockHash) -> Self {
-        Self {
-            hash,
-            vault_txs: vec![],
-        }
-    }
-    pub fn add_tx(&mut self, tx: TxVaultRow) {
-        self.vault_txs.push(tx);
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VaultTxHeader {
-    pub txid: Txid,
-    pub pos: u32,
-    pub sender_address: Option<String>,
-    pub sender_pubkey: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockVaultRow {
     pub height: usize,
     pub hash: BlockHash,
-    pub tx_headers: Vec<VaultTxHeader>,
+    pub tx_infos: Vec<TxVaultInfo>,
 }
 impl BlockVaultRow {
+    pub fn new(hash: BlockHash, height: usize) -> Self {
+        Self {
+            height,
+            hash,
+            tx_infos: vec![],
+        }
+    }
+    pub fn add_tx(&mut self, tx: TxVaultInfo) {
+        self.tx_infos.push(tx);
+    }
     pub fn into_row(self) -> DBRow {
         DBRow {
             key: self.hash.as_byte_array().to_vec(),
@@ -277,24 +263,10 @@ impl BlockVaultRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultTxValue {
     pub raw_tx: Vec<u8>,
-    pub txid: Txid,
-    pub sender_address: Option<String>,
-    pub sender_pubkey: Option<String>,
-    pub pos: u32,
+    pub tx_info: TxVaultInfo,
     pub proof: Vec<sha256d::Hash>,
 }
-impl From<&VaultTxValue> for Value {
-    fn from(value: &VaultTxValue) -> Self {
-        json!(value)
-        // json!({
-        //     "raw_tx": value.raw_tx,
-        //     "txid": value.txid,
-        //     "sender": value.sender,
-        //     "pos": value.pos,
-        //     "proof": value.proof,
-        // })
-    }
-}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultBlockValue {
     pub hash: BlockHash,
@@ -305,7 +277,7 @@ impl From<&VaultBlockValue> for Value {
     fn from(value: &VaultBlockValue) -> Self {
         json!({
             "hash": value.hash,
-            "txes": value.txes.iter().map(|tx| tx.into()).collect::<Vec<Value>>(),
+            "txes": value.txes.iter().map(|tx| json!(tx)).collect::<Vec<Value>>(),
         })
     }
 }
