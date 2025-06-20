@@ -488,7 +488,7 @@ impl Connection {
         } else {
             self.last_vault_block = vault_blocks.iter().last().map(|v| v.hash.clone());
         }
-        let block_values = self.create_vault_block_values(vault_blocks, false)?;
+        let block_values = self.create_vault_block_values(vault_blocks)?;
         Ok(Value::Array(block_values))
     }
     fn handle_command(&mut self, method: &str, params: &[Value], id: &Value) -> Result<Value> {
@@ -587,11 +587,7 @@ impl Connection {
         Ok(result)
     }
 
-    fn create_vault_block_values(
-        &self,
-        vault_blocks: Vec<BlockVaultRow>,
-        with_metadata: bool,
-    ) -> Result<Vec<Value>> {
+    fn create_vault_block_values(&self, vault_blocks: Vec<BlockVaultRow>) -> Result<Vec<Value>> {
         let mut result = vec![];
         for vault_block in vault_blocks {
             let BlockVaultRow {
@@ -604,6 +600,12 @@ impl Connection {
                 height: height,
                 txes: vec![],
             };
+            debug!(
+                "Create vault block value with hash {:?}, height {:?}, txs count {:?}",
+                &hash,
+                &height,
+                &tx_infos.len()
+            );
             for tx_info in tx_infos {
                 let (merkle, _pos) = get_tx_merkle_proof(self.query.chain(), &tx_info.txid, &hash)
                     .chain_err(|| "cannot create merkle proof")?;
@@ -617,14 +619,7 @@ impl Connection {
                     proof: merkle,
                 });
             }
-            if with_metadata {
-                result.push(json!({
-                        "jsonrpc": "2.0",
-                            "method": METHOD_VAULT_BLOCKS_SUBSCRIBE,
-                            "params": Value::from(&block_value)}));
-            } else {
-                result.push(Value::from(&block_value));
-            }
+            result.push(Value::from(&block_value));
         }
         Ok(result)
     }
@@ -638,8 +633,11 @@ impl Connection {
         if !vault_blocks.is_empty() {
             self.last_vault_block = vault_blocks.iter().last().map(|v| v.hash.clone());
             info!("Found {} vault blocks", vault_blocks.len());
-            let vault_block_values = self.create_vault_block_values(vault_blocks, true)?;
-            result.extend(vault_block_values);
+            let vault_block_values = self.create_vault_block_values(vault_blocks)?;
+            result.push(json!({
+                        "jsonrpc": "2.0",
+                        "method": METHOD_VAULT_BLOCKS_SUBSCRIBE,
+                        "params": Value::Array(vault_block_values)}));
         }
         Ok(result)
     }
@@ -701,7 +699,10 @@ impl Connection {
                                 .update_subscriptions()
                                 .chain_err(|| "failed to update subscriptions")?;
                             if !values.is_empty() {
-                                trace!("Handle PeriodicUpdate with values {:?}", &values);
+                                trace!(
+                                    "Handle PeriodicUpdate with values count {:?}",
+                                    &values.len()
+                                );
                             }
                             self.send_values(&values)?
                         }

@@ -278,6 +278,7 @@ impl From<&VaultBlockValue> for Value {
     fn from(value: &VaultBlockValue) -> Self {
         json!({
             "hash": value.hash,
+            "height": value.height,
             "txes": value.txes.iter().map(|tx| json!(tx)).collect::<Vec<Value>>(),
         })
     }

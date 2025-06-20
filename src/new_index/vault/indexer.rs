@@ -66,11 +66,20 @@ impl VaultIndexer {
                     block_vault.tx_infos.len()
                 );
                 block_rows.push(block_vault.into_row());
+            } else {
+                info!(
+                    "No vault txs found in the block {:?}, height: {:?}",
+                    block_vault.hash, block_vault.height
+                );
             }
         }
         let vault_store = self.store.vault_store();
         //vault_store.flush_vault_tx(vault_rows);
-        vault_store.flush_vault_blocks(block_rows);
+        if !block_rows.is_empty() {
+            vault_store.flush_vault_blocks(block_rows);
+        } else {
+            info!("No vault txs found in the {:?} blocks", block_entries.len());
+        }
     }
     // pub fn index_blocks(&self, block_entries: &[BlockEntry]) {
     //     let vault_rows: Vec<TxVaultRow> = block_entries

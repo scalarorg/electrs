@@ -3,14 +3,11 @@ use bitcoin::BlockHash;
 
 use super::db::DBFlush;
 use super::{DBRow, DB};
-use super::{TxVaultInfo, TxVaultKey, TxVaultRow};
 use std::path::Path;
 
 use crate::config::Config;
 use crate::errors::*;
 use crate::new_index::vault::BlockVaultRow;
-
-const HASH_LEN: usize = 32;
 
 pub struct VaultStore {
     //vault_txs: DB, //Store map TxVaultKey to TxVaultInfo
@@ -77,7 +74,15 @@ impl VaultStore {
             if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
                 debug!("key: {:?} with length {:?}", hex::encode(key), key.len());
                 match BlockVaultRow::try_from_bytes(&key, &value) {
-                    Ok(row) => block_vaults.push(row),
+                    Ok(row) => {
+                        debug!(
+                            "Found vault block with hash {:?}, height {:?}, txs count {:?}",
+                            &row.hash,
+                            &row.height,
+                            row.tx_infos.len()
+                        );
+                        block_vaults.push(row);
+                    }
                     Err(e) => {
                         error!("Failed to deserialize BlockVaultRow: {:?}", e);
                     }
