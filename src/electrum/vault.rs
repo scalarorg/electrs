@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use bitcoin::BlockHash;
-
 use crate::errors::Result;
 use crate::new_index::vault::{BlockVaultRow, TxVaultRow};
 use crate::new_index::Query;

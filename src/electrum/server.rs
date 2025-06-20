@@ -14,8 +14,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
-use bitcoin::hashes::Hash as _;
-use bitcoin::BlockHash;
 use error_chain::ChainedError;
 use hex;
 use hex::ToHex as _;
@@ -590,11 +588,13 @@ impl Connection {
             let BlockVaultRow {
                 hash,
                 height,
+                time,
                 tx_infos,
             } = vault_block;
             let mut block_value = VaultBlockValue {
                 hash: hash,
                 height: height,
+                time: time,
                 txes: vec![],
             };
             debug!(

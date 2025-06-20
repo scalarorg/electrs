@@ -70,7 +70,7 @@ impl VaultStore {
         };
         while (block_vaults.len() < batch_size) && iter.valid() {
             if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
-                // debug!("key: {:?} with length {:?}", hex::encode(key), key.len());
+                debug!("key: {:?} with length {:?}", hex::encode(key), key.len());
                 match BlockVaultRow::try_from_bytes(key, value) {
                     Ok(row) => {
                         if row.tx_infos.len() > 0 {

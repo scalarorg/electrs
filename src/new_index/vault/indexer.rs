@@ -37,6 +37,7 @@ impl VaultIndexer {
                 let mut block_vault_row = BlockVaultRow::new(
                     block_entry.entry.hash().clone(),
                     block_entry.entry.height(),
+                    block_entry.entry.header().time,
                 );
                 for (idx, tx) in block_entry.block.txdata.iter().enumerate() {
                     let height = block_entry.entry.height();
@@ -61,8 +62,9 @@ impl VaultIndexer {
             //vault_rows.extend(vault_txs.into_iter().map(|tx| tx.into_row()));
             if block_vault.tx_infos.len() > 0 {
                 info!(
-                    "Found vault block at height: {:?} with hash: {:?}, number of txs: {:?}",
+                    "Found vault block at height: {:?}, time: {:?}, hash: {:?}, number of txs: {:?}",
                     block_vault.height,
+                    block_vault.time,
                     block_vault.hash,
                     block_vault.tx_infos.len()
                 );

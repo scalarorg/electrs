@@ -228,13 +228,15 @@ impl From<VaultTransaction> for TxVaultInfo {
 pub struct BlockVaultRow {
     pub height: usize,
     pub hash: BlockHash,
+    pub time: u32,
     pub tx_infos: Vec<TxVaultInfo>,
 }
 impl BlockVaultRow {
-    pub fn new(hash: BlockHash, height: usize) -> Self {
+    pub fn new(hash: BlockHash, height: usize, time: u32) -> Self {
         Self {
             height,
             hash,
+            time,
             tx_infos: vec![],
         }
     }
@@ -253,7 +255,10 @@ impl BlockVaultRow {
 
     pub fn try_from_row(row: DBRow) -> Result<Self> {
         if row.key.len() != 8 {
-            error!("Invalid key length: {:?}", row.key.len())
+            return Err(Error::from(format!(
+                "Invalid key length: {:?}",
+                row.key.len()
+            )));
         }
         //let height = u64::from_be_bytes(row.key.try_into().unwrap()) as usize;
         let block_vault_row =
@@ -263,9 +268,9 @@ impl BlockVaultRow {
     pub fn try_from_bytes(key: &[u8], value: &[u8]) -> Result<Self> {
         debug!("Get latest vault block from key: {:?}", hex::encode(key));
         if key.len() != 8 {
-            error!("Invalid key length: {:?}", key.len())
+            return Err(Error::from(format!("Invalid key length: {:?}", key.len())));
         }
-        let height = u64::from_be_bytes(key[0..8].try_into().unwrap()) as usize;
+        let _height = u64::from_be_bytes(key[0..8].try_into().unwrap()) as usize;
         let block_vault_row =
             bincode_util::deserialize_big(value).map_err(|e| Error::from(e.to_string()))?;
         Ok(block_vault_row)
@@ -283,6 +288,7 @@ pub struct VaultTxValue {
 pub struct VaultBlockValue {
     pub hash: BlockHash,
     pub height: usize,
+    pub time: u32,
     pub txes: Vec<VaultTxValue>,
 }
 
@@ -291,6 +297,7 @@ impl From<&VaultBlockValue> for Value {
         json!({
             "hash": value.hash,
             "height": value.height,
+            "time": value.time,
             "txes": value.txes.iter().map(|tx| json!(tx)).collect::<Vec<Value>>(),
         })
     }
