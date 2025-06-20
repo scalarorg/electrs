@@ -39,20 +39,21 @@ impl VaultServer {
     //     let vault_store = self.query.chain().store().vault_store();
     //     vault_store.get_transactions_from_hash(batch_size, last_vault_tx_hash)
     // }
-    pub fn get_last_vault_block_hash(&self) -> Result<BlockHash> {
-        let vault_store = self.query.chain().store().vault_store();
-        let res = vault_store.get_last_vault_block();
-        if res.is_err() {
-            warn!("get_last_vault_block error: {:?}", res);
-        }
-        res.map(|v| v.hash)
-    }
-    pub fn get_vault_blocks_from_hash(
+    // pub fn get_last_vault_block_hash(&self) -> Result<BlockHash> {
+    //     let vault_store = self.query.chain().store().vault_store();
+    //     let res = vault_store.get_last_vault_block();
+    //     if res.is_err() {
+    //         warn!("get_last_vault_block error: {:?}", res);
+    //     }
+    //     res.map(|v| v.hash)
+    // }
+    //Use block height as key
+    pub fn get_vault_blocks_from_key(
         &self,
         batch_size: usize,
-        last_block_hash: Option<BlockHash>,
+        last_key: &Option<u64>,
     ) -> Result<Vec<BlockVaultRow>> {
         let vault_store = self.query.chain().store().vault_store();
-        vault_store.get_vault_block_from_hash(batch_size, last_block_hash)
+        vault_store.get_vault_block_from_key(batch_size, last_key)
     }
 }

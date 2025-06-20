@@ -34,24 +34,29 @@ impl VaultStore {
     pub fn flush_vault_blocks(&self, rows: Vec<DBRow>) {
         self.vault_blocks.write(rows, DBFlush::Enable);
     }
-    pub fn get_vault_block_from_hash(
+    pub fn remove_empty_vault_blocks(&self, heights: Vec<usize>) {
+        for height in heights {
+            let _ = self.vault_blocks.delete(&height.to_be_bytes());
+        }
+    }
+    pub fn get_vault_block_from_key(
         &self,
         batch_size: usize,
-        last_block_hash: Option<BlockHash>,
+        last_block_key: &Option<u64>,
     ) -> Result<Vec<BlockVaultRow>> {
         debug!(
-            "Get vault block with batch size: {:?} from hash: {:?}",
-            batch_size, last_block_hash
+            "Get vault block with batch size: {:?} from key: {:?}",
+            batch_size, last_block_key
         );
         let mut block_vaults = Vec::new();
-        let mut iter = match last_block_hash {
+        let mut iter = match last_block_key {
             Some(key) => {
-                debug!("Get latest vault tx from key: {:?}", &key);
+                debug!("Get latest vault block from key: {:?}", key);
                 // let mut iter = self
                 //     .vault_txs()
                 //     .forward_iterator_from(key.as_bytes().as_slice());
                 let mut iter = self.vault_blocks().raw_iterator();
-                iter.seek(key.as_byte_array());
+                iter.seek(key.to_be_bytes());
                 iter.next();
                 iter
             }
@@ -65,16 +70,18 @@ impl VaultStore {
         };
         while (block_vaults.len() < batch_size) && iter.valid() {
             if let (Some(key), Some(value)) = (iter.key(), iter.value()) {
-                debug!("key: {:?} with length {:?}", hex::encode(key), key.len());
-                match BlockVaultRow::try_from_bytes(&key, &value) {
+                // debug!("key: {:?} with length {:?}", hex::encode(key), key.len());
+                match BlockVaultRow::try_from_bytes(key, value) {
                     Ok(row) => {
-                        debug!(
-                            "Found vault block with hash {:?}, height {:?}, txs count {:?}",
-                            &row.hash,
-                            &row.height,
-                            row.tx_infos.len()
-                        );
-                        block_vaults.push(row);
+                        if row.tx_infos.len() > 0 {
+                            debug!(
+                                "Found vault block with hash {:?}, height {:?}, txs count {:?}",
+                                &row.hash,
+                                &row.height,
+                                row.tx_infos.len()
+                            );
+                            block_vaults.push(row);
+                        }
                     }
                     Err(e) => {
                         error!("Failed to deserialize BlockVaultRow: {:?}", e);

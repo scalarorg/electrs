@@ -27,10 +27,10 @@ electrum-discovery = ["electrum-client"]
 scalar-vault = []
 
 [dependencies]
-arrayref = "0.3.6"
+arrayref = "0.3.9"
 base64 = "0.13.0"
 bincode-do-not-use-directly = { version = "1.3.1", package = "bincode" }
-bitcoin = { version = "^0.32.4", features = ["serde"] }
+bitcoin = { version = "^0.32.6", features = ["serde"] }
 # bitcoin = { version = "0.28", features = [ "use-serde" ] }
 bounded-vec-deque = "0.1.1"
 clap = "2.33.3"
@@ -68,7 +68,7 @@ tokio = { version = "1", features = ["sync", "macros"] }
 
 # optional dependencies for electrum-discovery
 electrum-client = { version = "0.8", optional = true }
-bitcoin-vault = { git = "https://github.com/scalarorg/bitcoin-vault", rev = "8533870", package = "vault" }
+bitcoin-vault = { git = "https://github.com/scalarorg/bitcoin-vault", rev = "b210c23", package = "vault" }
 trie-db = "0.30.0"
 hash-db = "0.16.0"
 memory-db = "0.33.0"

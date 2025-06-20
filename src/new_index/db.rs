@@ -286,6 +286,9 @@ impl DB {
             Some(_) => (),
         }
     }
+    pub fn delete(&self, key: &[u8]) -> Result<(), rocksdb::Error> {
+        self.db.delete(key)
+    }
 }
 
 pub fn open_raw_db<T: rocksdb::ThreadMode>(path: &Path) -> rocksdb::DBWithThreadMode<T> {

@@ -113,7 +113,7 @@ struct Connection {
     query: Arc<Query>,
     last_header_entry: Option<HeaderEntry>,
     //Store last vault key for subscription
-    last_vault_block: Option<BlockHash>,
+    last_vault_block_key: Option<u64>,
     vault_block_batch_size: usize,
     status_hashes: HashMap<Sha256dHash, Value>, // ScriptHash -> StatusHash
     stream: ConnectionStream,
@@ -139,8 +139,8 @@ impl Connection {
         let vault = VaultServer::new(query.clone());
         Connection {
             query,
-            last_header_entry: None, // disable header subscription for now
-            last_vault_block: None,  // disable vault block subscription for now
+            last_header_entry: None,    // disable header subscription for now
+            last_vault_block_key: None, // disable vault block subscription for now
             vault_block_batch_size: 1,
             status_hashes: HashMap::new(),
             stream,
@@ -469,22 +469,18 @@ impl Connection {
     // }
     fn vault_block_subscribe(&mut self, params: &[Value]) -> Result<Value> {
         let batch_size = params.first().and_then(|value| value.as_u64()).unwrap_or(1) as usize;
-        let hash = params.get(1).and_then(|value| value.as_str());
+        let last_block = params.get(1).and_then(|value| value.as_u64());
         info!(
-            "Handle vault_block_subscribe request with batch_size {:?} and hash {:?}",
-            &batch_size, &hash
+            "Handle vault_block_subscribe request with batch_size {:?} and last_block {:?}",
+            &batch_size, &last_block
         );
-        let hash = hash.and_then(|v| {
-            hex::decode(v)
-                .ok()
-                .and_then(|v| BlockHash::from_slice(v.as_slice()).ok())
-        });
         //Set value for periodic update
         self.vault_block_batch_size = batch_size;
-        self.last_vault_block = hash;
-        let vault_blocks = self.vault.get_vault_blocks_from_hash(batch_size, hash)?;
+        let vault_blocks = self
+            .vault
+            .get_vault_blocks_from_key(batch_size, &last_block)?;
         if !vault_blocks.is_empty() {
-            self.last_vault_block = vault_blocks.iter().last().map(|v| v.hash.clone());
+            self.last_vault_block_key = vault_blocks.iter().last().map(|v| v.height as u64);
         } else {
             // Get the last vault entry from storage
             // self.last_vault_block = self.vault.get_last_vault_block_hash().ok();
@@ -629,10 +625,10 @@ impl Connection {
         //Scalar: Add vault subscription
         let vault_blocks = self
             .vault
-            .get_vault_blocks_from_hash(self.vault_block_batch_size, self.last_vault_block)?;
+            .get_vault_blocks_from_key(self.vault_block_batch_size, &self.last_vault_block_key)?;
 
         if !vault_blocks.is_empty() {
-            self.last_vault_block = vault_blocks.iter().last().map(|v| v.hash.clone());
+            self.last_vault_block_key = vault_blocks.iter().last().map(|v| v.height as u64);
             info!("Found {} vault blocks", vault_blocks.len());
             let vault_block_values = self.create_vault_block_values(vault_blocks)?;
             result.push(json!({

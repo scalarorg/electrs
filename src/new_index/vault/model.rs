@@ -146,6 +146,7 @@ impl TxVaultRow {
         TxVaultRow { key, info }
     }
     pub fn try_from_bytes(key: &[u8], value: &[u8]) -> Result<Self> {
+        //debug!("Get latest vault block from key: {:?}", hex::encode(key));
         let key = TxVaultKey::try_from_bytes(key)?;
         let info = TxVaultInfo::try_from_bytes(value)?;
         Ok(TxVaultRow { key, info })
@@ -240,22 +241,33 @@ impl BlockVaultRow {
     pub fn add_tx(&mut self, tx: TxVaultInfo) {
         self.tx_infos.push(tx);
     }
+    /*
+    DBRow key must contains height and hash of the block for ordering
+     */
     pub fn into_row(self) -> DBRow {
         DBRow {
-            key: self.hash.as_byte_array().to_vec(),
+            key: (self.height as u64).to_be_bytes().to_vec(),
             value: bincode_util::serialize_big(&self).unwrap(),
         }
     }
 
-    pub fn from_row(row: DBRow) -> Self {
+    pub fn try_from_row(row: DBRow) -> Result<Self> {
+        if row.key.len() != 8 {
+            error!("Invalid key length: {:?}", row.key.len())
+        }
+        //let height = u64::from_be_bytes(row.key.try_into().unwrap()) as usize;
         let block_vault_row =
-            bincode_util::deserialize_big(&row.value).expect("failed to deserialize BlockVaultRow");
-        block_vault_row
+            bincode_util::deserialize_big(&row.value).map_err(|e| Error::from(e.to_string()))?;
+        Ok(block_vault_row)
     }
-    pub fn try_from_bytes(_key: &[u8], value: &[u8]) -> Result<Self> {
-        // let _hash = BlockHash::from_slice(_key).unwrap();
+    pub fn try_from_bytes(key: &[u8], value: &[u8]) -> Result<Self> {
+        debug!("Get latest vault block from key: {:?}", hex::encode(key));
+        if key.len() != 8 {
+            error!("Invalid key length: {:?}", key.len())
+        }
+        let height = u64::from_be_bytes(key[0..8].try_into().unwrap()) as usize;
         let block_vault_row =
-            bincode_util::deserialize_big(value).expect("failed to deserialize BlockVaultRow");
+            bincode_util::deserialize_big(value).map_err(|e| Error::from(e.to_string()))?;
         Ok(block_vault_row)
     }
 }
