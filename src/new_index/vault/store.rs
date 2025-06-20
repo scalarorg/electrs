@@ -43,16 +43,8 @@ impl VaultStore {
             "Get vault block with batch size: {:?} from hash: {:?}",
             batch_size, last_block_hash
         );
-        let last_key = last_block_hash.and_then(|v| {
-            hex::decode(v)
-                .map_err(|e| Error::from(e.to_string()))
-                .and_then(|e| {
-                    BlockHash::from_slice(e.as_slice()).map_err(|e| Error::from(e.to_string()))
-                })
-                .ok()
-        });
         let mut block_vaults = Vec::new();
-        let mut iter = match last_key {
+        let mut iter = match last_block_hash {
             Some(key) => {
                 debug!("Get latest vault tx from key: {:?}", &key);
                 // let mut iter = self
@@ -65,6 +57,7 @@ impl VaultStore {
             }
 
             None => {
+                debug!("Last key is none. Get first vault block");
                 let mut iter = self.vault_blocks().raw_iterator();
                 iter.seek_to_first();
                 iter

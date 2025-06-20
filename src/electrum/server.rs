@@ -479,14 +479,15 @@ impl Connection {
                 .ok()
                 .and_then(|v| BlockHash::from_slice(v.as_slice()).ok())
         });
-        let vault_blocks = self.vault.get_vault_blocks_from_hash(batch_size, hash)?;
         //Set value for periodic update
         self.vault_block_batch_size = batch_size;
-        if vault_blocks.is_empty() {
-            // Get the last vault entry from storage
-            self.last_vault_block = self.vault.get_last_vault_block_hash().ok();
-        } else {
+        self.last_vault_block = hash;
+        let vault_blocks = self.vault.get_vault_blocks_from_hash(batch_size, hash)?;
+        if !vault_blocks.is_empty() {
             self.last_vault_block = vault_blocks.iter().last().map(|v| v.hash.clone());
+        } else {
+            // Get the last vault entry from storage
+            // self.last_vault_block = self.vault.get_last_vault_block_hash().ok();
         }
         let block_values = self.create_vault_block_values(vault_blocks)?;
         Ok(Value::Array(block_values))
