@@ -125,14 +125,16 @@ impl VaultIndexer {
             let first_txin = vault_tx.inputs.first();
             let staker_pubkey = self.extract_script_pubkey(first_txin);
             let staker_address = self.extract_staker_address(first_txin);
-            //let script_pubkey = first_txin.and_then(|input| input.get_pubkey());
             let mut vault_info = TxVaultInfo::from(vault_tx);
+            // let script_pubkey = first_txin.and_then(|input| input.get_pubkey());
+            // vault_info.script_pubkey = script_pubkey;
             vault_info.timestamp = block_timestamp;
             vault_info.confirmed_height = confirmed_height;
             vault_info.block_hash = block_hash;
             vault_info.tx_position = tx_position;
             vault_info.staker_pubkey = staker_pubkey;
             vault_info.staker_address = staker_address;
+
             let vault_key = TxVaultKey::new(
                 confirmed_height,
                 tx_position,

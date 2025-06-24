@@ -14,9 +14,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
+use bitcoin::Transaction;
 use error_chain::ChainedError;
 use hex;
 use hex::ToHex as _;
+use serde::Deserialize;
 use serde_json::{from_str, Value};
 use sha2::{Digest, Sha256};
 
@@ -25,7 +27,7 @@ use bitcoin::consensus::encode::serialize;
 #[cfg(feature = "liquid")]
 use elements::encode::serialize;
 
-use crate::chain::Txid;
+use crate::chain::{OutPoint, Txid};
 use crate::config::{Config, VERSION_STRING};
 use crate::electrum::{get_electrum_height, ProtocolVersion};
 use crate::errors::*;
@@ -581,7 +583,18 @@ impl Connection {
         timer.observe_duration();
         Ok(result)
     }
+    fn get_previous_output_script_pubkey(&self, raw_tx: &[u8]) -> Result<Vec<u8>> {
+        let tx: Transaction =
+            crate::chain::deserialize(raw_tx).chain_err(|| "failed to deserialize transaction")?;
+        let first_input = tx.input.first().chain_err(|| "transaction has no inputs")?;
 
+        let outpoint = &first_input.previous_output;
+        let outpoints = std::collections::BTreeSet::from([*outpoint]);
+        let txos = self.query.lookup_txos(&outpoints);
+        let txo = txos.get(outpoint).chain_err(|| "missing previous output")?;
+
+        Ok(txo.script_pubkey.to_bytes())
+    }
     fn create_vault_block_values(&self, vault_blocks: Vec<BlockVaultRow>) -> Result<Vec<Value>> {
         let mut result = vec![];
         for vault_block in vault_blocks {
@@ -603,13 +616,20 @@ impl Connection {
                 &height,
                 &tx_infos.len()
             );
-            for tx_info in tx_infos {
+            for mut tx_info in tx_infos {
                 let (merkle, _pos) = get_tx_merkle_proof(self.query.chain(), &tx_info.txid, &hash)
                     .chain_err(|| "cannot create merkle proof")?;
                 let tx = self
                     .query
                     .lookup_raw_txn(&tx_info.txid)
                     .chain_err(|| "missing transaction")?;
+                //Get previous output script pubkey
+                if let Ok(previous_output_script_pubkey) =
+                    self.get_previous_output_script_pubkey(tx.as_slice())
+                {
+                    tx_info.staker_pubkey = Some(hex::encode(previous_output_script_pubkey));
+                }
+
                 block_value.txes.push(VaultTxValue {
                     raw_tx: tx,
                     tx_info: tx_info,

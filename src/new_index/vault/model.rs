@@ -36,7 +36,7 @@ pub struct TxVaultInfo {
     pub destination_recipient_address: String, //Hex string
     pub session_sequence: u64,
     pub custodian_group_uid: [u8; HASH_LEN],
-    pub script_pubkey: Vec<u8>,
+    pub script_pubkey: Vec<u8>, //Custodian script pubkey
 }
 
 impl TxVaultInfo {
