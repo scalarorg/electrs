@@ -46,6 +46,10 @@ impl VaultServer {
     //     res.map(|v| v.hash)
     // }
     //Use block height as key
+    pub fn get_vault_block_by_height(&self, height: u64) -> Result<BlockVaultRow> {
+        let vault_store = self.query.chain().store().vault_store();
+        vault_store.get_vault_block_by_height(height)
+    }
     pub fn get_vault_blocks_from_key(
         &self,
         batch_size: usize,

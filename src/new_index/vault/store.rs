@@ -92,6 +92,14 @@ impl VaultStore {
         }
         Ok(block_vaults)
     }
+    pub fn get_vault_block_by_height(&self, height: u64) -> Result<BlockVaultRow> {
+        let key = height.to_be_bytes();
+        let value = self
+            .vault_blocks
+            .get(&key)
+            .chain_err(|| "Vault block not found")?;
+        BlockVaultRow::try_from_bytes(&key, &value).chain_err(|| "Invalid value")
+    }
     pub fn get_last_vault_block(&self) -> Result<BlockVaultRow> {
         let mut iter = self.vault_blocks().raw_iterator();
         iter.seek_to_last();

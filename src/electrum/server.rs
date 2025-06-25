@@ -49,6 +49,7 @@ use crate::electrum::{DiscoveryManager, ServerFeatures};
 use super::vault::VaultServer;
 
 const METHOD_VAULT_BLOCKS_SUBSCRIBE: &str = "vault.blocks.subscribe";
+const METHOD_VAULT_BLOCKS_GET: &str = "vault.blocks.get";
 //const METHOD_VAULT_TRANSACTIONS_SUBSCRIBE: &str = "vault.transactions.subscribe";
 //const METHOD_VAULT_TRANSACTIONS_GET: &str = "vault.transactions.get";
 
@@ -467,6 +468,14 @@ impl Connection {
     //     }
     //     Ok(result)
     // }
+    fn vault_block_get(&self, params: &[Value]) -> Result<Value> {
+        let block_height = params
+            .first()
+            .and_then(|value| value.as_u64())
+            .chain_err(|| "bad last_block")?;
+        let vault_blocks = self.vault.get_vault_block_by_height(block_height)?;
+        self.create_vault_block_value(vault_blocks)
+    }
     fn vault_block_subscribe(&mut self, params: &[Value]) -> Result<Value> {
         let batch_size = params.first().and_then(|value| value.as_u64()).unwrap_or(1) as usize;
         let last_block = params.get(1).and_then(|value| value.as_u64());
@@ -483,7 +492,7 @@ impl Connection {
             self.last_vault_block_key = vault_blocks.iter().last().map(|v| v.height as u64);
         } else {
             // Get the last vault entry from storage
-            // self.last_vault_block = self.vault.get_last_vault_block_hash().ok();
+            self.last_vault_block_key = last_block;
         }
         let block_values = self.create_vault_block_values(vault_blocks)?;
         Ok(Value::Array(block_values))
@@ -523,6 +532,7 @@ impl Connection {
             "server.add_peer" => self.server_add_peer(params),
             // For vault transactions
             METHOD_VAULT_BLOCKS_SUBSCRIBE => self.vault_block_subscribe(params),
+            METHOD_VAULT_BLOCKS_GET => self.vault_block_get(params),
             // METHOD_VAULT_TRANSACTIONS_SUBSCRIBE => self.vault_transactions_subscribe(params),
             // METHOD_VAULT_TRANSACTIONS_GET => self.vault_transactions_get(params),
             &_ => bail!("unknown method {} {:?}", method, params),
@@ -594,6 +604,41 @@ impl Connection {
         let txo = txos.get(outpoint).chain_err(|| "missing previous output")?;
 
         Ok(txo.script_pubkey.to_bytes())
+    }
+    fn create_vault_block_value(&self, vault_block: BlockVaultRow) -> Result<Value> {
+        let BlockVaultRow {
+            hash,
+            height,
+            time,
+            tx_infos,
+        } = vault_block;
+        let mut block_value = VaultBlockValue {
+            hash: hash,
+            height: height,
+            time: time,
+            txes: vec![],
+        };
+        for mut tx_info in tx_infos {
+            let (merkle, _pos) = get_tx_merkle_proof(self.query.chain(), &tx_info.txid, &hash)
+                .chain_err(|| "cannot create merkle proof")?;
+            let tx = self
+                .query
+                .lookup_raw_txn(&tx_info.txid)
+                .chain_err(|| "missing transaction")?;
+            //Get previous output script pubkey
+            if let Ok(previous_output_script_pubkey) =
+                self.get_previous_output_script_pubkey(tx.as_slice())
+            {
+                tx_info.staker_pubkey = Some(hex::encode(previous_output_script_pubkey));
+            }
+
+            block_value.txes.push(VaultTxValue {
+                raw_tx: tx,
+                tx_info: tx_info,
+                proof: merkle,
+            });
+        }
+        Ok(Value::from(&block_value))
     }
     fn create_vault_block_values(&self, vault_blocks: Vec<BlockVaultRow>) -> Result<Vec<Value>> {
         let mut result = vec![];
